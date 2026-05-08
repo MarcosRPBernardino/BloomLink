@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BloomLink Stock MVP</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>BloomLink Stock MVP</h1>
+      <p>Real-time stock requests for event staff.</p>
+    </div>
+    <span id="connectionStatus" class="status-label offline">Disconnected</span>
+  </header>
+
+  <main class="app-layout">
+    <section class="panel">
+      <h2>Connect User</h2>
+      <form id="connectForm" class="form-grid">
+        <label>
+          Name
+          <input id="userName" type="text" value="Ana" required>
+        </label>
+
+        <label>
+          Role
+          <select id="currentRole"></select>
+        </label>
+
+        <label>
+          Location
+          <select id="currentLocation"></select>
+        </label>
+
+        <label>
+          Status
+          <select id="userStatus">
+            <option value="available">Available</option>
+            <option value="on_break">On break</option>
+          </select>
+        </label>
+        <button type="submit" class="primary-button">Connect</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Create Stock Request</h2>
+      <form id="stockForm" class="form-grid">
+        <label>
+          Location
+          <select id="requestLocation"></select>
+        </label>
+
+        <label>
+          Item
+          <select id="requestItem"></select>
+        </label>
+
+        <button type="submit" class="primary-button">Send Request</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Online Users</h2>
+      <div id="usersList" class="list empty">No users online.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Stock Alerts Received</h2>
+      <div id="alertsList" class="list empty">No alerts received yet.</div>
+    </section>
+
+    <section class="panel wide">
+      <h2>Active Requests</h2>
+      <div id="requestsList" class="list empty">No stock requests yet.</div>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
