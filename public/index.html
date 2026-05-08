@@ -7,23 +7,29 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="app-header">
-    <div>
-      <h1>BloomLink Stock MVP</h1>
-      <p>Real-time stock requests for event staff.</p>
-    </div>
-    <span id="connectionStatus" class="status-label offline">Disconnected</span>
-  </header>
-
-  <main class="app-layout">
-    <section class="panel">
-      <h2>Connect User</h2>
-      <form id="connectForm" class="form-grid">
+  <main>
+    <section id="loginScreen" class="screen auth-screen">
+      <h1>BloomLink</h1>
+      <form id="loginForm" class="form-grid">
         <label>
           Name
           <input id="userName" type="text" value="Ana" required>
         </label>
 
+        <label>
+          PIN
+          <input id="userPin" type="password" value="3333" inputmode="numeric" required>
+        </label>
+
+        <button type="submit" class="primary-button">Login</button>
+      </form>
+      <p id="loginError" class="error-message hidden"></p>
+    </section>
+
+    <section id="shiftScreen" class="screen auth-screen hidden">
+      <h1>Start Shift</h1>
+      <p id="loggedUserName" class="muted-text"></p>
+      <form id="shiftForm" class="form-grid hidden">
         <label>
           Role
           <select id="currentRole"></select>
@@ -34,47 +40,52 @@
           <select id="currentLocation"></select>
         </label>
 
-        <label>
-          Status
-          <select id="userStatus">
-            <option value="available">Available</option>
-            <option value="on_break">On break</option>
-          </select>
-        </label>
-        <button type="submit" class="primary-button">Connect</button>
+        <button type="submit" class="primary-button">Start Shift</button>
       </form>
     </section>
 
-    <section class="panel">
-      <h2>Create Stock Request</h2>
-      <form id="stockForm" class="form-grid">
-        <label>
-          Location
-          <select id="requestLocation"></select>
-        </label>
+    <section id="appScreen" class="hidden">
+      <header class="app-header">
+        <div>
+          <h1>BloomLink Stock MVP</h1>
+          <p id="currentUserInfo">Real-time stock requests for event staff.</p>
+        </div>
+        <span id="connectionStatus" class="status-label offline">Disconnected</span>
+      </header>
 
-        <label>
-          Item
-          <select id="requestItem"></select>
-        </label>
+      <div class="app-layout">
+        <section class="panel">
+          <h2>Create Stock Request</h2>
+          <form id="stockForm" class="form-grid">
+            <label>
+              Location
+              <select id="requestLocation"></select>
+            </label>
 
-        <button type="submit" class="primary-button">Send Request</button>
-      </form>
-    </section>
+            <label>
+              Item
+              <select id="requestItem"></select>
+            </label>
 
-    <section class="panel">
-      <h2>Online Users</h2>
-      <div id="usersList" class="list empty">No users online.</div>
-    </section>
+            <button type="submit" class="primary-button">Send Request</button>
+          </form>
+        </section>
 
-    <section class="panel">
-      <h2>Stock Alerts Received</h2>
-      <div id="alertsList" class="list empty">No alerts received yet.</div>
-    </section>
+        <section class="panel">
+          <h2>Online Users</h2>
+          <div id="usersList" class="list empty">No users online.</div>
+        </section>
 
-    <section class="panel wide">
-      <h2>Active Requests</h2>
-      <div id="requestsList" class="list empty">No stock requests yet.</div>
+        <section class="panel">
+          <h2>Stock Alerts Received</h2>
+          <div id="alertsList" class="list empty">No alerts received yet.</div>
+        </section>
+
+        <section class="panel wide">
+          <h2>Active Requests</h2>
+          <div id="requestsList" class="list empty">No stock requests yet.</div>
+        </section>
+      </div>
     </section>
   </main>
 

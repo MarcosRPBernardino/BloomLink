@@ -18,6 +18,49 @@ const PORT = process.env.PORT || 3000;
 const users = new Map();
 const stockRequests = new Map();
 
+const registeredUsers = [
+  {
+    id: "user_marcos",
+    name: "Marcos",
+    pin: "1111",
+    permissions: { admin: true, manager: true, chef: true },
+    allowedRoles: ["Manager"],
+    defaultRole: "Manager"
+  },
+  {
+    id: "user_carlos",
+    name: "Carlos",
+    pin: "2222",
+    permissions: { admin: false, manager: true, chef: false },
+    allowedRoles: ["Manager"],
+    defaultRole: "Manager"
+  },
+  {
+    id: "user_ana",
+    name: "Ana",
+    pin: "3333",
+    permissions: { admin: false, manager: false, chef: false },
+    allowedRoles: ["Staff", "KP", "Stock Runner"],
+    defaultRole: "Staff"
+  },
+  {
+    id: "user_joao",
+    name: "João",
+    pin: "4444",
+    permissions: { admin: false, manager: false, chef: false },
+    allowedRoles: ["Staff", "KP", "Stock Runner"],
+    defaultRole: "Staff"
+  },
+  {
+    id: "user_rafael",
+    name: "Rafael",
+    pin: "5555",
+    permissions: { admin: false, manager: false, chef: true },
+    allowedRoles: ["Chef", "Staff", "KP", "Stock Runner"],
+    defaultRole: "Chef"
+  }
+];
+
 app.use(express.static(path.join(__dirname, "public")));
 
 function createId(prefix) {
@@ -28,12 +71,25 @@ function getOnlineUsers() {
   return Array.from(users.values()).filter((user) => user.online);
 }
 
+function getPublicOnlineUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    permissions: user.permissions,
+    currentRole: user.currentRole,
+    currentLocation: user.currentLocation,
+    currentChannel: user.currentChannel,
+    status: user.status,
+    online: user.online
+  };
+}
+
 function getStockRequests() {
   return Array.from(stockRequests.values()).sort((a, b) => a.createdAt - b.createdAt);
 }
 
 function broadcastUsers() {
-  io.emit("users:update", getOnlineUsers());
+  io.emit("users:update", getOnlineUsers().map(getPublicOnlineUser));
 }
 
 function broadcastStockRequests() {
@@ -55,31 +111,88 @@ function isEligibleStockRecipient(user) {
   );
 }
 
-function getSafeUserPayload(socket, data) {
-  const currentRole = data.currentRole || "Staff";
+function findRegisteredUserByName(name) {
+  const normalizedName = String(name || "").trim().toLowerCase();
+
+  return registeredUsers.find((user) => user.name.toLowerCase() === normalizedName);
+}
+
+function pinMatches(user, pin) {
+  const normalizedPin = String(pin || "").trim();
+
+  return user?.pin === normalizedPin;
+}
+
+function getPublicRegisteredUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    permissions: user.permissions,
+    allowedRoles: user.allowedRoles,
+    defaultRole: user.defaultRole
+  };
+}
+
+function createOnlineUser(socket, registeredUser, data) {
+  const currentRole = data.currentRole;
 
   return {
-    id: socket.id,
-    name: String(data.name || "Unknown").trim() || "Unknown",
-    // For this MVP, permissions are derived server-side from the selected role.
-    permissions: {
-      admin: false,
-      manager: currentRole === "Manager",
-      chef: false
-    },
+    id: registeredUser.id,
+    socketId: socket.id,
+    name: registeredUser.name,
+    permissions: registeredUser.permissions,
     currentRole,
     currentLocation: data.currentLocation || "Kitchen",
-    currentChannel: data.currentChannel || "All",
-    status: data.status || "available",
+    currentChannel: "All",
+    status: "available",
     online: true
   };
 }
 
 io.on("connection", (socket) => {
-  socket.on("user:connect", (data) => {
-    const user = getSafeUserPayload(socket, data || {});
+  socket.on("user:login", (data) => {
+    const receivedName = String(data?.name || "").trim();
+    const registeredUser = findRegisteredUserByName(receivedName);
+    const pinMatched = pinMatches(registeredUser, data?.pin);
+
+    console.log("Login attempt", {
+      receivedName,
+      userFound: Boolean(registeredUser),
+      pinMatched
+    });
+
+    if (!registeredUser || !pinMatched) {
+      socket.emit("user:login_failed", {
+        message: "Invalid name or PIN."
+      });
+      return;
+    }
+
+    socket.data.registeredUser = registeredUser;
+    socket.emit("user:login_success", getPublicRegisteredUser(registeredUser));
+  });
+
+  socket.on("user:start_shift", (data) => {
+    const registeredUser = socket.data.registeredUser;
+
+    if (!registeredUser) {
+      socket.emit("user:start_failed", {
+        message: "Log in before starting a shift."
+      });
+      return;
+    }
+
+    if (!registeredUser.allowedRoles.includes(data?.currentRole)) {
+      socket.emit("user:start_failed", {
+        message: "This role is not allowed for your user."
+      });
+      return;
+    }
+
+    const user = createOnlineUser(socket, registeredUser, data || {});
     users.set(socket.id, user);
 
+    socket.emit("user:session_started", getPublicOnlineUser(user));
     socket.emit("stock:update", getStockRequests());
     broadcastUsers();
   });
@@ -114,7 +227,7 @@ io.on("connection", (socket) => {
       }
 
       if (isEligibleStockRecipient(user)) {
-        io.to(user.id).emit("stock:alert", request);
+        io.to(user.socketId).emit("stock:alert", request);
       }
     }
 
@@ -126,7 +239,7 @@ io.on("connection", (socket) => {
     const request = stockRequests.get(data?.requestId);
     const action = data?.action;
 
-    if (!user || !request || action !== "on_my_way") {
+    if (!user || !request || action !== "on_my_way" || !isEligibleStockRecipient(user)) {
       return;
     }
 

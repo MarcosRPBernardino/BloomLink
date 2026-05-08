@@ -9,8 +9,6 @@ const locations = [
   "Floor (upstairs)"
 ];
 
-const roles = ["Manager", "Chef", "Staff", "KP", "Stock Runner"];
-
 const stockItems = [
   "12oz Cups",
   "8oz Cups",
@@ -26,6 +24,7 @@ const stockItems = [
 const socket = io(SERVER_URL);
 
 const state = {
+  loggedInUser: null,
   currentUser: null,
   users: [],
   activeRequests: [],
@@ -33,15 +32,22 @@ const state = {
 };
 
 const elements = {
+  loginScreen: document.querySelector("#loginScreen"),
+  shiftScreen: document.querySelector("#shiftScreen"),
+  appScreen: document.querySelector("#appScreen"),
   connectionStatus: document.querySelector("#connectionStatus"),
-  connectForm: document.querySelector("#connectForm"),
+  loginForm: document.querySelector("#loginForm"),
+  shiftForm: document.querySelector("#shiftForm"),
   stockForm: document.querySelector("#stockForm"),
   userName: document.querySelector("#userName"),
+  userPin: document.querySelector("#userPin"),
   currentRole: document.querySelector("#currentRole"),
   currentLocation: document.querySelector("#currentLocation"),
-  userStatus: document.querySelector("#userStatus"),
   requestLocation: document.querySelector("#requestLocation"),
   requestItem: document.querySelector("#requestItem"),
+  loginError: document.querySelector("#loginError"),
+  loggedUserName: document.querySelector("#loggedUserName"),
+  currentUserInfo: document.querySelector("#currentUserInfo"),
   usersList: document.querySelector("#usersList"),
   alertsList: document.querySelector("#alertsList"),
   requestsList: document.querySelector("#requestsList")
@@ -67,12 +73,38 @@ function setConnectionStatus(text, isConnected) {
   elements.connectionStatus.className = `status-label ${isConnected ? "online" : "offline"}`;
 }
 
+function showScreen(screenName) {
+  elements.loginScreen.classList.toggle("hidden", screenName !== "login");
+  elements.shiftScreen.classList.toggle("hidden", screenName !== "shift");
+  elements.appScreen.classList.toggle("hidden", screenName !== "app");
+}
+
+function showLoginError(message) {
+  elements.loginError.textContent = message;
+  elements.loginError.classList.remove("hidden");
+}
+
+function clearLoginError() {
+  elements.loginError.textContent = "";
+  elements.loginError.classList.add("hidden");
+}
+
 function getRequestTitle(request) {
   return `${request.location} needs ${request.item}`;
 }
 
 function canCurrentUserRenderStockAlerts() {
-  return state.currentUser?.currentRole !== "Staff";
+  if (!state.currentUser || state.currentUser.status === "on_break") {
+    return false;
+  }
+
+  return (
+    state.currentUser.permissions?.admin === true ||
+    state.currentUser.permissions?.manager === true ||
+    state.currentUser.currentRole === "Manager" ||
+    state.currentUser.currentRole === "KP" ||
+    state.currentUser.currentRole === "Stock Runner"
+  );
 }
 
 function renderUsers() {
@@ -171,31 +203,42 @@ function renderAll() {
   renderUsers();
   renderAlerts();
   renderRequests();
+
+  if (state.currentUser) {
+    elements.currentUserInfo.textContent =
+      `${state.currentUser.name} - ${state.currentUser.currentRole} at ${state.currentUser.currentLocation}`;
+  }
 }
 
-function connectUser(event) {
+function loginUser(event) {
+  event.preventDefault();
+  clearLoginError();
+
+  socket.emit("user:login", {
+    name: elements.userName.value,
+    pin: elements.userPin.value
+  });
+}
+
+function startShift(event) {
   event.preventDefault();
 
-  const user = {
-    id: socket.id,
-    name: elements.userName.value,
-    currentRole: elements.currentRole.value,
-    currentLocation: elements.currentLocation.value,
-    currentChannel: "All",
-    status: elements.userStatus.value,
-    online: true
-  };
+  if (!state.loggedInUser) {
+    alert("Log in before starting a shift.");
+    return;
+  }
 
-  state.currentUser = user;
-  socket.emit("user:connect", user);
-  renderAll();
+  socket.emit("user:start_shift", {
+    currentRole: elements.currentRole.value,
+    currentLocation: elements.currentLocation.value
+  });
 }
 
 function createStockRequest(event) {
   event.preventDefault();
 
   if (!state.currentUser) {
-    alert("Connect as a user before creating a stock request.");
+    alert("Start your shift before creating a stock request.");
     return;
   }
 
@@ -223,11 +266,9 @@ function handleListClick(event) {
   }
 }
 
-fillSelect(elements.currentRole, roles);
 fillSelect(elements.currentLocation, locations);
 fillSelect(elements.requestLocation, locations);
 fillSelect(elements.requestItem, stockItems);
-elements.currentRole.value = "Staff";
 elements.currentLocation.value = "Shack (Front)";
 elements.requestLocation.value = "Shack (Front)";
 elements.requestItem.value = "12oz Cups";
@@ -243,6 +284,35 @@ socket.on("disconnect", () => {
 socket.on("users:update", (users) => {
   state.users = users;
   renderUsers();
+});
+
+socket.on("user:login_success", (user) => {
+  clearLoginError();
+  state.loggedInUser = user;
+  state.currentUser = null;
+  state.receivedAlerts = [];
+  fillSelect(elements.currentRole, user.allowedRoles);
+  elements.currentRole.value = user.defaultRole;
+  elements.loggedUserName.textContent = `Logged in as ${user.name}`;
+  elements.shiftForm.classList.remove("hidden");
+  showScreen("shift");
+  renderAll();
+});
+
+socket.on("user:login_failed", (data) => {
+  showLoginError(data.message || "Invalid name or PIN.");
+  showScreen("login");
+});
+
+socket.on("user:session_started", (user) => {
+  state.currentUser = user;
+  state.receivedAlerts = [];
+  showScreen("app");
+  renderAll();
+});
+
+socket.on("user:start_failed", (data) => {
+  alert(data.message || "Could not start shift.");
 });
 
 socket.on("stock:alert", (request) => {
@@ -276,7 +346,8 @@ socket.on("stock:claim_failed", (data) => {
   alert(data.message || "This request has already been assigned.");
 });
 
-elements.connectForm.addEventListener("submit", connectUser);
+elements.loginForm.addEventListener("submit", loginUser);
+elements.shiftForm.addEventListener("submit", startShift);
 elements.stockForm.addEventListener("submit", createStockRequest);
 elements.alertsList.addEventListener("click", handleListClick);
 elements.requestsList.addEventListener("click", handleListClick);

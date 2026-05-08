@@ -69,6 +69,35 @@ button:hover {
   margin: 0 auto;
 }
 
+.screen {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.auth-screen {
+  display: grid;
+  align-content: center;
+  gap: 18px;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.auth-screen h1 {
+  margin: 0;
+  font-size: 30px;
+}
+
+.muted-text {
+  margin: 0;
+  color: #5b677a;
+}
+
+.error-message {
+  margin: 0;
+  color: #991b1b;
+  font-weight: 700;
+}
+
 .panel {
   background: #ffffff;
   border: 1px solid #d8e0ec;
@@ -83,6 +112,10 @@ button:hover {
 
 .wide {
   grid-column: 1 / -1;
+}
+
+.hidden {
+  display: none;
 }
 
 .form-grid {
