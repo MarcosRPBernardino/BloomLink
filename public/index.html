@@ -53,7 +53,12 @@
         <span id="connectionStatus" class="status-label offline">Disconnected</span>
       </header>
 
-      <div class="app-layout">
+      <nav class="tab-bar">
+        <button id="operationsTab" type="button" class="tab-button active" data-tab="operations">Operations</button>
+        <button id="adminTab" type="button" class="tab-button hidden" data-tab="admin">Admin</button>
+      </nav>
+
+      <div id="operationsView" class="app-layout">
         <section class="panel">
           <h2>Create Stock Request</h2>
           <form id="stockForm" class="form-grid">
@@ -72,11 +77,6 @@
         </section>
 
         <section class="panel">
-          <h2>Online Users</h2>
-          <div id="usersList" class="list empty">No users online.</div>
-        </section>
-
-        <section class="panel">
           <h2>Stock Alerts Received</h2>
           <div id="alertsList" class="list empty">No alerts received yet.</div>
         </section>
@@ -84,6 +84,44 @@
         <section class="panel wide">
           <h2>Active Requests</h2>
           <div id="requestsList" class="list empty">No stock requests yet.</div>
+        </section>
+
+        <section class="panel wide">
+          <h2>Online Users</h2>
+          <div id="usersList" class="list empty">No users online.</div>
+        </section>
+      </div>
+
+      <div id="adminView" class="app-layout hidden">
+        <section id="adminPanel" class="panel wide">
+          <h2>Admin Panel</h2>
+
+          <form id="adminCreateUserForm" class="form-grid admin-form">
+            <label>
+              Name
+              <input id="adminNewUserName" type="text" required>
+            </label>
+
+            <label>
+              PIN
+              <input id="adminNewUserPin" type="text" inputmode="numeric" required>
+            </label>
+
+            <label class="checkbox-row">
+              <input id="adminNewUserManager" type="checkbox">
+              Manager permission
+            </label>
+
+            <label class="checkbox-row">
+              <input id="adminNewUserChef" type="checkbox">
+              Chef permission
+            </label>
+
+            <button type="submit" class="primary-button">Create User</button>
+          </form>
+
+          <p id="adminError" class="error-message hidden"></p>
+          <div id="adminUsersList" class="list empty">No registered users loaded.</div>
         </section>
       </div>
     </section>

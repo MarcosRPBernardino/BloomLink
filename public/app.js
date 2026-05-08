@@ -28,13 +28,19 @@ const state = {
   currentUser: null,
   users: [],
   activeRequests: [],
-  receivedAlerts: []
+  receivedAlerts: [],
+  adminUsers: [],
+  activeTab: "operations"
 };
 
 const elements = {
   loginScreen: document.querySelector("#loginScreen"),
   shiftScreen: document.querySelector("#shiftScreen"),
   appScreen: document.querySelector("#appScreen"),
+  operationsTab: document.querySelector("#operationsTab"),
+  adminTab: document.querySelector("#adminTab"),
+  operationsView: document.querySelector("#operationsView"),
+  adminView: document.querySelector("#adminView"),
   connectionStatus: document.querySelector("#connectionStatus"),
   loginForm: document.querySelector("#loginForm"),
   shiftForm: document.querySelector("#shiftForm"),
@@ -48,6 +54,14 @@ const elements = {
   loginError: document.querySelector("#loginError"),
   loggedUserName: document.querySelector("#loggedUserName"),
   currentUserInfo: document.querySelector("#currentUserInfo"),
+  adminPanel: document.querySelector("#adminPanel"),
+  adminCreateUserForm: document.querySelector("#adminCreateUserForm"),
+  adminNewUserName: document.querySelector("#adminNewUserName"),
+  adminNewUserPin: document.querySelector("#adminNewUserPin"),
+  adminNewUserManager: document.querySelector("#adminNewUserManager"),
+  adminNewUserChef: document.querySelector("#adminNewUserChef"),
+  adminError: document.querySelector("#adminError"),
+  adminUsersList: document.querySelector("#adminUsersList"),
   usersList: document.querySelector("#usersList"),
   alertsList: document.querySelector("#alertsList"),
   requestsList: document.querySelector("#requestsList")
@@ -89,6 +103,14 @@ function clearLoginError() {
   elements.loginError.classList.add("hidden");
 }
 
+function resetSessionState() {
+  state.loggedInUser = null;
+  state.currentUser = null;
+  state.receivedAlerts = [];
+  state.adminUsers = [];
+  state.activeTab = "operations";
+}
+
 function getRequestTitle(request) {
   return `${request.location} needs ${request.item}`;
 }
@@ -105,6 +127,43 @@ function canCurrentUserRenderStockAlerts() {
     state.currentUser.currentRole === "KP" ||
     state.currentUser.currentRole === "Stock Runner"
   );
+}
+
+function isCurrentUserAdmin() {
+  return state.currentUser?.permissions?.admin === true;
+}
+
+function showAdminError(message) {
+  elements.adminError.textContent = message;
+  elements.adminError.classList.remove("hidden");
+}
+
+function clearAdminError() {
+  elements.adminError.textContent = "";
+  elements.adminError.classList.add("hidden");
+}
+
+function renderTabs() {
+  const canUseAdminTab = isCurrentUserAdmin();
+
+  if (!canUseAdminTab && state.activeTab === "admin") {
+    state.activeTab = "operations";
+  }
+
+  elements.adminTab.classList.toggle("hidden", !canUseAdminTab);
+  elements.operationsView.classList.toggle("hidden", state.activeTab !== "operations");
+  elements.adminView.classList.toggle("hidden", state.activeTab !== "admin" || !canUseAdminTab);
+  elements.operationsTab.classList.toggle("active", state.activeTab === "operations");
+  elements.adminTab.classList.toggle("active", state.activeTab === "admin");
+}
+
+function switchTab(tabName) {
+  if (tabName === "admin" && !isCurrentUserAdmin()) {
+    return;
+  }
+
+  state.activeTab = tabName;
+  renderTabs();
 }
 
 function renderUsers() {
@@ -128,6 +187,48 @@ function renderUsers() {
         </article>
       `
     )
+    .join("");
+}
+
+function renderAdminPanel() {
+  if (!isCurrentUserAdmin()) {
+    return;
+  }
+
+  if (state.adminUsers.length === 0) {
+    elements.adminUsersList.className = "list empty";
+    elements.adminUsersList.textContent = "No registered users loaded.";
+    return;
+  }
+
+  elements.adminUsersList.className = "list";
+  elements.adminUsersList.innerHTML = state.adminUsers
+    .map((user) => {
+      const managerText = user.permissions.manager ? "Remove manager" : "Make manager";
+      const chefText = user.permissions.chef ? "Remove chef" : "Make chef";
+      const statusText = user.disabled ? "Disabled" : "Enabled";
+      const statusAction = user.disabled ? "Enable" : "Disable";
+      const statusActionName = user.disabled ? "enable" : "disable";
+
+      return `
+        <article class="row-card admin-user-card">
+          <div class="request-header">
+            <strong>${user.name}</strong>
+            <span class="status-label ${user.disabled ? "offline" : "online"}">${statusText}</span>
+          </div>
+          <span>Roles: ${user.allowedRoles.join(", ")}</span>
+          <span>Default role: ${user.defaultRole}</span>
+          <span>Permissions: admin ${user.permissions.admin ? "yes" : "no"}, manager ${user.permissions.manager ? "yes" : "no"}, chef ${user.permissions.chef ? "yes" : "no"}</span>
+          <div class="admin-button-row">
+            <button data-admin-action="toggle-manager" data-user-id="${user.id}">${managerText}</button>
+            <button data-admin-action="toggle-chef" data-user-id="${user.id}">${chefText}</button>
+            <button data-admin-action="${statusActionName}" data-user-id="${user.id}">${statusAction}</button>
+            <button data-admin-action="reset-pin" data-user-id="${user.id}">Reset PIN</button>
+            <button data-admin-action="delete" data-user-id="${user.id}">Delete</button>
+          </div>
+        </article>
+      `;
+    })
     .join("");
 }
 
@@ -200,9 +301,11 @@ function renderRequests() {
 }
 
 function renderAll() {
+  renderTabs();
   renderUsers();
   renderAlerts();
   renderRequests();
+  renderAdminPanel();
 
   if (state.currentUser) {
     elements.currentUserInfo.textContent =
@@ -248,6 +351,20 @@ function createStockRequest(event) {
   });
 }
 
+function createAdminUser(event) {
+  event.preventDefault();
+  clearAdminError();
+
+  socket.emit("admin:user:create", {
+    name: elements.adminNewUserName.value,
+    pin: elements.adminNewUserPin.value,
+    manager: elements.adminNewUserManager.checked,
+    chef: elements.adminNewUserChef.checked
+  });
+
+  elements.adminCreateUserForm.reset();
+}
+
 function handleListClick(event) {
   const responseButton = event.target.closest("[data-action]");
   const deliverButton = event.target.closest("[data-deliver-id]");
@@ -263,6 +380,72 @@ function handleListClick(event) {
     socket.emit("stock:delivered", {
       requestId: deliverButton.dataset.deliverId
     });
+  }
+}
+
+function handleAdminClick(event) {
+  const button = event.target.closest("[data-admin-action]");
+
+  if (!button) {
+    return;
+  }
+
+  clearAdminError();
+
+  const user = state.adminUsers.find((adminUser) => adminUser.id === button.dataset.userId);
+
+  if (!user) {
+    return;
+  }
+
+  if (button.dataset.adminAction === "toggle-manager") {
+    socket.emit("admin:user:update", {
+      id: user.id,
+      manager: !user.permissions.manager,
+      chef: user.permissions.chef
+    });
+  }
+
+  if (button.dataset.adminAction === "toggle-chef") {
+    socket.emit("admin:user:update", {
+      id: user.id,
+      manager: user.permissions.manager,
+      chef: !user.permissions.chef
+    });
+  }
+
+  if (button.dataset.adminAction === "disable") {
+    socket.emit("admin:user:disable", {
+      id: user.id
+    });
+  }
+
+  if (button.dataset.adminAction === "enable") {
+    socket.emit("admin:user:enable", {
+      id: user.id
+    });
+  }
+
+  if (button.dataset.adminAction === "reset-pin") {
+    const nextPin = prompt(`Enter a new PIN for ${user.name}:`);
+
+    if (nextPin !== null) {
+      socket.emit("admin:user:reset_pin", {
+        id: user.id,
+        pin: nextPin
+      });
+    }
+  }
+
+  if (button.dataset.adminAction === "delete") {
+    const confirmed = confirm("Are you sure you want to permanently delete this user?");
+
+    if (confirmed) {
+      console.log("Deleting user:", user.id, user.name);
+      socket.emit("admin:user:delete", {
+        id: user.id
+      });
+    }
   }
 }
 
@@ -307,7 +490,11 @@ socket.on("user:login_failed", (data) => {
 socket.on("user:session_started", (user) => {
   state.currentUser = user;
   state.receivedAlerts = [];
+  state.activeTab = "operations";
   showScreen("app");
+  if (isCurrentUserAdmin()) {
+    socket.emit("admin:users:list");
+  }
   renderAll();
 });
 
@@ -346,8 +533,34 @@ socket.on("stock:claim_failed", (data) => {
   alert(data.message || "This request has already been assigned.");
 });
 
+socket.on("admin:users:list", (users) => {
+  state.adminUsers = users;
+  clearAdminError();
+  renderAdminPanel();
+});
+
+socket.on("admin:error", (data) => {
+  showAdminError(data.message || "Admin action failed.");
+});
+
+socket.on("user:account_deleted", (data) => {
+  alert(data.message || "Your account was deleted.");
+  resetSessionState();
+  showScreen("login");
+});
+
+socket.on("user:session_invalidated", (data) => {
+  alert(data.message || "Your account was updated by an admin. Please log in again.");
+  resetSessionState();
+  showScreen("login");
+});
+
 elements.loginForm.addEventListener("submit", loginUser);
 elements.shiftForm.addEventListener("submit", startShift);
 elements.stockForm.addEventListener("submit", createStockRequest);
 elements.alertsList.addEventListener("click", handleListClick);
 elements.requestsList.addEventListener("click", handleListClick);
+elements.adminCreateUserForm.addEventListener("submit", createAdminUser);
+elements.adminUsersList.addEventListener("click", handleAdminClick);
+elements.operationsTab.addEventListener("click", () => switchTab("operations"));
+elements.adminTab.addEventListener("click", () => switchTab("admin"));

@@ -3,6 +3,7 @@ dist/
 build/
 .env
 .env.local
+bloomlink.db
 npm-debug.log*
 yarn-error.log*
 .vscode/

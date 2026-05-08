@@ -69,6 +69,24 @@ button:hover {
   margin: 0 auto;
 }
 
+.tab-bar {
+  display: flex;
+  gap: 8px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 16px 16px 0;
+}
+
+.tab-button {
+  min-width: 140px;
+}
+
+.tab-button.active {
+  border-color: #2563eb;
+  background: #dbeafe;
+  color: #1e40af;
+}
+
 .screen {
   min-height: 100vh;
   padding: 24px;
@@ -192,6 +210,16 @@ select {
   gap: 8px;
 }
 
+.admin-form {
+  margin-bottom: 16px;
+}
+
+.admin-button-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .status-label {
   display: inline-flex;
   align-items: center;
@@ -242,6 +270,15 @@ select {
   }
 
   .button-row {
+    grid-template-columns: 1fr;
+  }
+
+  .tab-bar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .admin-button-row {
     grid-template-columns: 1fr;
   }
 }

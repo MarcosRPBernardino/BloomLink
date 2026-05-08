@@ -2,6 +2,19 @@ const express = require("express");
 const http = require("http");
 const path = require("path");
 const { Server } = require("socket.io");
+const {
+  dbPath,
+  initializeDatabase,
+  findRegisteredUserByName,
+  listRegisteredUsers,
+  getRegisteredUserById,
+  getAdminUserCount,
+  createRegisteredUser,
+  updateRegisteredUserPermissions,
+  setRegisteredUserDisabled,
+  resetRegisteredUserPin,
+  deleteRegisteredUser
+} = require("./db");
 
 const app = express();
 const server = http.createServer(app);
@@ -15,51 +28,13 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 
+// Registered users are persistent in SQLite. Online users stay in memory because they are live socket sessions.
 const users = new Map();
+
+// Stock requests are still in memory for this MVP phase; only registered users are persisted in Phase 2A.
 const stockRequests = new Map();
 
-const registeredUsers = [
-  {
-    id: "user_marcos",
-    name: "Marcos",
-    pin: "1111",
-    permissions: { admin: true, manager: true, chef: true },
-    allowedRoles: ["Manager"],
-    defaultRole: "Manager"
-  },
-  {
-    id: "user_carlos",
-    name: "Carlos",
-    pin: "2222",
-    permissions: { admin: false, manager: true, chef: false },
-    allowedRoles: ["Manager"],
-    defaultRole: "Manager"
-  },
-  {
-    id: "user_ana",
-    name: "Ana",
-    pin: "3333",
-    permissions: { admin: false, manager: false, chef: false },
-    allowedRoles: ["Staff", "KP", "Stock Runner"],
-    defaultRole: "Staff"
-  },
-  {
-    id: "user_joao",
-    name: "João",
-    pin: "4444",
-    permissions: { admin: false, manager: false, chef: false },
-    allowedRoles: ["Staff", "KP", "Stock Runner"],
-    defaultRole: "Staff"
-  },
-  {
-    id: "user_rafael",
-    name: "Rafael",
-    pin: "5555",
-    permissions: { admin: false, manager: false, chef: true },
-    allowedRoles: ["Chef", "Staff", "KP", "Stock Runner"],
-    defaultRole: "Chef"
-  }
-];
+initializeDatabase();
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -111,12 +86,6 @@ function isEligibleStockRecipient(user) {
   );
 }
 
-function findRegisteredUserByName(name) {
-  const normalizedName = String(name || "").trim().toLowerCase();
-
-  return registeredUsers.find((user) => user.name.toLowerCase() === normalizedName);
-}
-
 function pinMatches(user, pin) {
   const normalizedPin = String(pin || "").trim();
 
@@ -129,7 +98,8 @@ function getPublicRegisteredUser(user) {
     name: user.name,
     permissions: user.permissions,
     allowedRoles: user.allowedRoles,
-    defaultRole: user.defaultRole
+    defaultRole: user.defaultRole,
+    disabled: user.disabled
   };
 }
 
@@ -149,6 +119,61 @@ function createOnlineUser(socket, registeredUser, data) {
   };
 }
 
+function isAdminSocket(socket) {
+  const user = users.get(socket.id);
+
+  return user?.permissions?.admin === true;
+}
+
+function emitAdminUsers(socket) {
+  socket.emit("admin:users:list", listRegisteredUsers().map(getPublicRegisteredUser));
+}
+
+function handleAdminAction(socket, action) {
+  // Admin actions are validated on the server, so hiding the UI is not the security boundary.
+  if (!isAdminSocket(socket)) {
+    socket.emit("admin:error", {
+      message: "Admin permission is required."
+    });
+    return;
+  }
+
+  try {
+    action();
+    emitAdminUsers(socket);
+  } catch (error) {
+    socket.emit("admin:error", {
+      message: error.message || "Admin action failed."
+    });
+  }
+}
+
+function removeOnlineSessionsForRegisteredUser(registeredUserId) {
+  for (const [socketId, user] of users.entries()) {
+    if (user.id === registeredUserId) {
+      io.to(socketId).emit("user:account_deleted", {
+        message: "Your account was deleted by an admin."
+      });
+      users.delete(socketId);
+    }
+  }
+
+  broadcastUsers();
+}
+
+function invalidateOnlineSessionsForRegisteredUser(registeredUserId) {
+  for (const [socketId, user] of users.entries()) {
+    if (user.id === registeredUserId) {
+      io.to(socketId).emit("user:session_invalidated", {
+        message: "Your account was updated by an admin. Please log in again."
+      });
+      users.delete(socketId);
+    }
+  }
+
+  broadcastUsers();
+}
+
 io.on("connection", (socket) => {
   socket.on("user:login", (data) => {
     const receivedName = String(data?.name || "").trim();
@@ -164,6 +189,13 @@ io.on("connection", (socket) => {
     if (!registeredUser || !pinMatched) {
       socket.emit("user:login_failed", {
         message: "Invalid name or PIN."
+      });
+      return;
+    }
+
+    if (registeredUser.disabled) {
+      socket.emit("user:login_failed", {
+        message: "This user is disabled."
       });
       return;
     }
@@ -191,10 +223,98 @@ io.on("connection", (socket) => {
 
     const user = createOnlineUser(socket, registeredUser, data || {});
     users.set(socket.id, user);
+    socket.user = user;
 
     socket.emit("user:session_started", getPublicOnlineUser(user));
     socket.emit("stock:update", getStockRequests());
     broadcastUsers();
+  });
+
+  socket.on("admin:users:list", () => {
+    handleAdminAction(socket, () => {});
+  });
+
+  socket.on("admin:user:create", (data) => {
+    handleAdminAction(socket, () => {
+      createRegisteredUser({
+        name: data?.name,
+        pin: data?.pin,
+        manager: data?.manager === true,
+        chef: data?.chef === true
+      });
+    });
+  });
+
+  socket.on("admin:user:update", (data) => {
+    handleAdminAction(socket, () => {
+      const adminUser = users.get(socket.id);
+      const userId = String(data?.id || "").trim();
+
+      if (userId === adminUser.id) {
+        throw new Error("You cannot update your own manager or chef permissions.");
+      }
+
+      updateRegisteredUserPermissions(userId, {
+        manager: data?.manager === true,
+        chef: data?.chef === true
+      });
+      invalidateOnlineSessionsForRegisteredUser(userId);
+    });
+  });
+
+  socket.on("admin:user:disable", (data) => {
+    handleAdminAction(socket, () => {
+      const adminUser = users.get(socket.id);
+      const userId = String(data?.id || "").trim();
+
+      if (userId === adminUser.id) {
+        throw new Error("You cannot disable your own account.");
+      }
+
+      setRegisteredUserDisabled(userId, true);
+      invalidateOnlineSessionsForRegisteredUser(userId);
+    });
+  });
+
+  socket.on("admin:user:enable", (data) => {
+    handleAdminAction(socket, () => {
+      setRegisteredUserDisabled(data?.id, false);
+    });
+  });
+
+  socket.on("admin:user:reset_pin", (data) => {
+    handleAdminAction(socket, () => {
+      const userId = String(data?.id || "").trim();
+
+      resetRegisteredUserPin(userId, data?.pin);
+      invalidateOnlineSessionsForRegisteredUser(userId);
+    });
+  });
+
+  socket.on("admin:user:delete", (data) => {
+    handleAdminAction(socket, () => {
+      const adminUser = users.get(socket.id);
+      const userId = String(data?.id || "").trim();
+      console.log("Delete request from:", socket.user?.name);
+      console.log("Target user id:", userId);
+
+      const targetUser = getRegisteredUserById(userId);
+
+      if (!targetUser) {
+        throw new Error("User not found or already deleted");
+      }
+
+      if (targetUser.id === adminUser.id) {
+        throw new Error("You cannot delete your own account.");
+      }
+
+      if (targetUser.permissions.admin && getAdminUserCount() <= 1) {
+        throw new Error("You cannot delete the last admin user.");
+      }
+
+      deleteRegisteredUser(userId);
+      removeOnlineSessionsForRegisteredUser(targetUser.id);
+    });
   });
 
   socket.on("stock:create", (data) => {
@@ -303,4 +423,5 @@ io.on("connection", (socket) => {
 
 server.listen(PORT, () => {
   console.log(`BloomLink Stock MVP server running on port ${PORT}`);
+  console.log(`SQLite database: ${dbPath}`);
 });
