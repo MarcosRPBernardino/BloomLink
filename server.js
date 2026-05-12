@@ -31,8 +31,9 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// Registered users are persistent in SQLite. Online users stay in memory because they are live socket sessions.
-const users = new Map();
+// Registered users are persistent in SQLite. Active shift users stay in memory for this MVP.
+// A shift remains active until explicit logout, even if the phone/browser socket disconnects.
+const activeShiftUsers = new Map();
 const pushSubscriptionsByUserId = new Map();
 
 // Stock requests are still in memory for this MVP phase; only registered users are persisted in Phase 2A.
@@ -67,20 +68,24 @@ function createId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-function getOnlineUsers() {
-  return Array.from(users.values()).filter((user) => user.online);
+function getActiveShiftUsers() {
+  return Array.from(activeShiftUsers.values());
 }
 
-function getPublicOnlineUser(user) {
+function getPublicActiveShiftUser(user) {
   return {
     id: user.id,
     name: user.name,
     permissions: user.permissions,
+    allowedRoles: user.allowedRoles,
     currentRole: user.currentRole,
     currentLocation: user.currentLocation,
     currentChannel: user.currentChannel,
     status: user.status,
-    online: user.online
+    connectionStatus: user.connectionStatus,
+    lastSeen: user.lastSeen,
+    startedAt: user.startedAt,
+    online: user.connectionStatus === "connected"
   };
 }
 
@@ -89,7 +94,9 @@ function getStockRequests() {
 }
 
 function broadcastUsers() {
-  io.emit("users:update", getOnlineUsers().map(getPublicOnlineUser));
+  const activeUsers = getActiveShiftUsers().map(getPublicActiveShiftUser);
+  console.log("users:update active shift count", activeUsers.length);
+  io.emit("users:update", activeUsers);
 }
 
 function broadcastStockRequests() {
@@ -178,24 +185,37 @@ function getPublicRegisteredUser(user) {
   };
 }
 
-function createOnlineUser(socket, registeredUser, data) {
+function createActiveShiftUser(socket, registeredUser, data) {
+  const existingUser = activeShiftUsers.get(registeredUser.id);
   const currentRole = data.currentRole;
+  const now = Date.now();
 
   return {
     id: registeredUser.id,
     socketId: socket.id,
     name: registeredUser.name,
     permissions: registeredUser.permissions,
+    allowedRoles: registeredUser.allowedRoles,
     currentRole,
     currentLocation: data.currentLocation || "Kitchen",
     currentChannel: "All",
     status: "available",
-    online: true
+    connectionStatus: "connected",
+    lastSeen: now,
+    startedAt: existingUser?.startedAt || now
   };
 }
 
+function getActiveShiftUserForSocket(socket) {
+  if (socket.data.activeShiftUserId) {
+    return activeShiftUsers.get(socket.data.activeShiftUserId);
+  }
+
+  return getActiveShiftUsers().find((user) => user.socketId === socket.id) || null;
+}
+
 function isAdminSocket(socket) {
-  const user = users.get(socket.id);
+  const user = getActiveShiftUserForSocket(socket);
 
   return user?.permissions?.admin === true;
 }
@@ -224,28 +244,28 @@ function handleAdminAction(socket, action) {
 }
 
 function removeOnlineSessionsForRegisteredUser(registeredUserId) {
-  for (const [socketId, user] of users.entries()) {
-    if (user.id === registeredUserId) {
-      io.to(socketId).emit("user:account_deleted", {
-        message: "Your account was deleted by an admin."
-      });
-      users.delete(socketId);
-    }
+  const user = activeShiftUsers.get(registeredUserId);
+
+  if (user?.connectionStatus === "connected" && user.socketId) {
+    io.to(user.socketId).emit("user:account_deleted", {
+      message: "Your account was deleted by an admin."
+    });
   }
 
+  activeShiftUsers.delete(registeredUserId);
   broadcastUsers();
 }
 
 function invalidateOnlineSessionsForRegisteredUser(registeredUserId) {
-  for (const [socketId, user] of users.entries()) {
-    if (user.id === registeredUserId) {
-      io.to(socketId).emit("user:session_invalidated", {
-        message: "Your account was updated by an admin. Please log in again."
-      });
-      users.delete(socketId);
-    }
+  const user = activeShiftUsers.get(registeredUserId);
+
+  if (user?.connectionStatus === "connected" && user.socketId) {
+    io.to(user.socketId).emit("user:session_invalidated", {
+      message: "Your account was updated by an admin. Please log in again."
+    });
   }
 
+  activeShiftUsers.delete(registeredUserId);
   broadcastUsers();
 }
 
@@ -296,11 +316,14 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const user = createOnlineUser(socket, registeredUser, data || {});
-    users.set(socket.id, user);
+    const user = createActiveShiftUser(socket, registeredUser, data || {});
+    activeShiftUsers.set(registeredUser.id, user);
     socket.user = user;
+    socket.data.activeShiftUserId = registeredUser.id;
 
-    socket.emit("user:session_started", getPublicOnlineUser(user));
+    console.log("active shift started", user.name);
+
+    socket.emit("user:session_started", getPublicActiveShiftUser(user));
     socket.emit("stock:update", getStockRequests());
     broadcastUsers();
   });
@@ -335,13 +358,14 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const user = createOnlineUser(socket, registeredUser, {
+    const user = createActiveShiftUser(socket, registeredUser, {
       currentRole: data.currentRole,
       currentLocation: data.currentLocation
     });
-    users.set(socket.id, user);
+    activeShiftUsers.set(registeredUser.id, user);
     socket.user = user;
     socket.data.registeredUser = registeredUser;
+    socket.data.activeShiftUserId = registeredUser.id;
 
     console.log("Restore success", {
       userId: user.id,
@@ -350,31 +374,29 @@ io.on("connection", (socket) => {
 
     socket.emit("user:restore_success", {
       registeredUser: getPublicRegisteredUser(registeredUser),
-      onlineUser: getPublicOnlineUser(user)
+      onlineUser: getPublicActiveShiftUser(user)
     });
     socket.emit("stock:update", getStockRequests());
     broadcastUsers();
   });
 
   socket.on("user:logout", () => {
-    const user = users.get(socket.id);
+    const user = getActiveShiftUserForSocket(socket);
 
     if (user) {
-      console.log("Logout received", {
-        userId: user.id,
-        name: user.name
-      });
-      users.delete(socket.id);
+      console.log("active shift logout", user.name);
+      activeShiftUsers.delete(user.id);
       broadcastUsers();
     }
 
     socket.user = null;
     socket.data.registeredUser = null;
+    socket.data.activeShiftUserId = null;
     socket.emit("user:logged_out");
   });
 
   socket.on("push:subscribe", (subscription) => {
-    const user = users.get(socket.id);
+    const user = getActiveShiftUserForSocket(socket);
 
     if (!user) {
       socket.emit("push:error", {
@@ -417,7 +439,7 @@ io.on("connection", (socket) => {
 
   socket.on("admin:user:update", (data) => {
     handleAdminAction(socket, () => {
-      const adminUser = users.get(socket.id);
+      const adminUser = getActiveShiftUserForSocket(socket);
       const userId = String(data?.id || "").trim();
 
       if (userId === adminUser.id) {
@@ -434,7 +456,7 @@ io.on("connection", (socket) => {
 
   socket.on("admin:user:disable", (data) => {
     handleAdminAction(socket, () => {
-      const adminUser = users.get(socket.id);
+      const adminUser = getActiveShiftUserForSocket(socket);
       const userId = String(data?.id || "").trim();
 
       if (userId === adminUser.id) {
@@ -463,7 +485,7 @@ io.on("connection", (socket) => {
 
   socket.on("admin:user:delete", (data) => {
     handleAdminAction(socket, () => {
-      const adminUser = users.get(socket.id);
+      const adminUser = getActiveShiftUserForSocket(socket);
       const userId = String(data?.id || "").trim();
       console.log("Delete request from:", socket.user?.name);
       console.log("Target user id:", userId);
@@ -488,7 +510,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("stock:create", (data) => {
-    const requester = users.get(socket.id);
+    const requester = getActiveShiftUserForSocket(socket);
 
     if (!requester || !data?.location || !data?.item) {
       return;
@@ -513,12 +535,16 @@ io.on("connection", (socket) => {
 
     stockRequests.set(request.id, request);
 
-    const eligibleRecipients = getOnlineUsers().filter((user) => {
+    const eligibleRecipients = getActiveShiftUsers().filter((user) => {
       if (user.id === requester.id) {
         return false;
       }
 
-      return isEligibleStockRecipient(user);
+      return (
+        user.connectionStatus === "connected" &&
+        Boolean(user.socketId) &&
+        isEligibleStockRecipient(user)
+      );
     });
 
     console.log(
@@ -538,7 +564,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("stock:response", (data) => {
-    const user = users.get(socket.id);
+    const user = getActiveShiftUserForSocket(socket);
     const request = stockRequests.get(data?.requestId);
     const action = data?.action;
 
@@ -573,7 +599,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("stock:delivered", (data) => {
-    const user = users.get(socket.id);
+    const user = getActiveShiftUserForSocket(socket);
     const request = stockRequests.get(data?.requestId);
 
     if (!user || !request || request.status === "delivered") {
@@ -592,7 +618,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("stock:clear_completed", () => {
-    const user = users.get(socket.id);
+    const user = getActiveShiftUserForSocket(socket);
     const hasPermission = canManageStockRequests(user);
 
     console.log("Clear completed received");
@@ -616,7 +642,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("stock:delete_request", (data) => {
-    const user = users.get(socket.id);
+    const user = getActiveShiftUserForSocket(socket);
     const requestId = String(data?.requestId || "").trim();
     const hasPermission = canManageStockRequests(user);
     const requestFound = stockRequests.has(requestId);
@@ -638,11 +664,13 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    const user = users.get(socket.id);
+    const user = getActiveShiftUserForSocket(socket);
 
-    if (user) {
-      user.online = false;
-      users.delete(socket.id);
+    if (user && user.socketId === socket.id) {
+      user.connectionStatus = "disconnected";
+      user.socketId = null;
+      user.lastSeen = Date.now();
+      console.log("socket disconnected but shift kept", user.name);
       broadcastUsers();
     }
 

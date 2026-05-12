@@ -99,6 +99,27 @@ function formatTime(timestamp) {
   });
 }
 
+function formatLastSeen(timestamp) {
+  if (!timestamp) {
+    return "unknown";
+  }
+
+  const secondsAgo = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+
+  if (secondsAgo < 60) {
+    return "just now";
+  }
+
+  const minutesAgo = Math.floor(secondsAgo / 60);
+
+  if (minutesAgo < 60) {
+    return `${minutesAgo} min ago`;
+  }
+
+  const hoursAgo = Math.floor(minutesAgo / 60);
+  return `${hoursAgo} hr ago`;
+}
+
 function setConnectionStatus(text, isConnected) {
   elements.connectionStatus.textContent = text;
   elements.connectionStatus.className = `status-label ${isConnected ? "online" : "offline"}`;
@@ -452,8 +473,13 @@ function renderUsers() {
 
   elements.usersList.className = "list";
   elements.usersList.innerHTML = state.users
-    .map(
-      (user) => `
+    .map((user) => {
+      const isConnected = user.connectionStatus === "connected";
+      const connectionText = isConnected
+        ? "Connected"
+        : `Disconnected · last seen ${formatLastSeen(user.lastSeen)}`;
+
+      return `
         <article class="row-card">
           <strong>${user.name}</strong>
           <span>${user.currentRole} at ${user.currentLocation}</span>
@@ -461,9 +487,10 @@ function renderUsers() {
           <span class="status-label ${user.status === "on_break" ? "break" : "online"}">
             ${user.status === "on_break" ? "On break" : "Available"}
           </span>
+          <span class="status-label ${isConnected ? "online" : "offline"}">Connection: ${connectionText}</span>
         </article>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
