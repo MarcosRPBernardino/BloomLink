@@ -494,6 +494,8 @@ io.on("connection", (socket) => {
       return;
     }
 
+    console.log("stock:create received", requester.name, requester.currentRole);
+
     const request = {
       id: createId("stock"),
       location: data.location,
@@ -511,17 +513,25 @@ io.on("connection", (socket) => {
 
     stockRequests.set(request.id, request);
 
-    for (const user of getOnlineUsers()) {
+    const eligibleRecipients = getOnlineUsers().filter((user) => {
       if (user.id === requester.id) {
-        continue;
+        return false;
       }
 
-      if (isEligibleStockRecipient(user)) {
-        io.to(user.socketId).emit("stock:alert", request);
-        sendStockPushNotification(user, request).catch((error) => {
-          console.error("Stock push notification failed:", error.message);
-        });
-      }
+      return isEligibleStockRecipient(user);
+    });
+
+    console.log(
+      "eligible recipients",
+      eligibleRecipients.map((user) => `${user.name}/${user.currentRole}`)
+    );
+
+    for (const user of eligibleRecipients) {
+      console.log("stock:alert emitted to", user.name);
+      io.to(user.socketId).emit("stock:alert", request);
+      sendStockPushNotification(user, request).catch((error) => {
+        console.error("Stock push notification failed:", error.message);
+      });
     }
 
     broadcastStockRequests();

@@ -371,6 +371,12 @@ function canCurrentUserRenderStockAlerts() {
     return false;
   }
 
+  // stock:alert is emitted only after server-side eligibility checks.
+  // The frontend keeps this guard mainly to prevent Staff from rendering actionable alerts.
+  if (state.currentUser.currentRole === "Staff") {
+    return false;
+  }
+
   return (
     state.currentUser.permissions?.admin === true ||
     state.currentUser.permissions?.manager === true ||
@@ -378,6 +384,18 @@ function canCurrentUserRenderStockAlerts() {
     state.currentUser.currentRole === "KP" ||
     state.currentUser.currentRole === "Stock Runner"
   );
+}
+
+function canRenderActionableStockAlert(request) {
+  if (!canCurrentUserRenderStockAlerts()) {
+    return false;
+  }
+
+  if (request.status !== "pending" || request.assignedTo) {
+    return false;
+  }
+
+  return request.requestedBy?.id !== state.currentUser.id;
 }
 
 function canManageStockRequests() {
@@ -838,11 +856,10 @@ socket.on("user:start_failed", (data) => {
 });
 
 socket.on("stock:alert", (request) => {
-  if (!canCurrentUserRenderStockAlerts()) {
-    return;
-  }
+  console.log("stock:alert received", request.id);
 
-  if (request.status !== "pending" || request.assignedTo) {
+  if (!canRenderActionableStockAlert(request)) {
+    console.log("receivedStockAlerts count", state.receivedAlerts.length);
     return;
   }
 
@@ -853,16 +870,29 @@ socket.on("stock:alert", (request) => {
     triggerStockAlertFeedback(request.id);
   }
 
+  console.log("receivedStockAlerts count", state.receivedAlerts.length);
   renderAlerts();
 });
 
 socket.on("stock:update", (requests) => {
   state.activeRequests = requests;
-  // stock:update is public state. It updates Active Requests, but it never creates actionable alerts.
+  const requestsById = new Map(requests.map((request) => [request.id, request]));
+
+  // stock:update is public state for Active Requests. This reconciliation keeps existing actionable
+  // alerts in sync and prevents a timing issue from leaving eligible users without the On my way card.
   state.receivedAlerts = state.receivedAlerts
-    .map((alert) => requests.find((request) => request.id === alert.id))
+    .map((alert) => requestsById.get(alert.id))
     .filter(Boolean)
-    .filter((alert) => alert.status === "pending" && !alert.assignedTo);
+    .filter(canRenderActionableStockAlert);
+
+  for (const request of requests) {
+    const alreadyAdded = state.receivedAlerts.some((alert) => alert.id === request.id);
+
+    if (!alreadyAdded && canRenderActionableStockAlert(request)) {
+      state.receivedAlerts.unshift(request);
+    }
+  }
+
   renderAll();
 });
 
