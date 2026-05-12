@@ -22,6 +22,7 @@ const stockItems = [
 ];
 
 const socket = io(SERVER_URL);
+const SESSION_STORAGE_KEY = "bloomlinkSession";
 
 const state = {
   loggedInUser: null,
@@ -48,8 +49,13 @@ const elements = {
   adminView: document.querySelector("#adminView"),
   connectionStatus: document.querySelector("#connectionStatus"),
   loginForm: document.querySelector("#loginForm"),
+  loginButton: document.querySelector("#loginButton"),
   shiftForm: document.querySelector("#shiftForm"),
+  startShiftButton: document.querySelector("#startShiftButton"),
+  logoutButton: document.querySelector("#logoutButton"),
   stockForm: document.querySelector("#stockForm"),
+  sendRequestButton: document.querySelector("#sendRequestButton"),
+  clearCompletedButton: document.querySelector("#clearCompletedButton"),
   userName: document.querySelector("#userName"),
   userPin: document.querySelector("#userPin"),
   currentRole: document.querySelector("#currentRole"),
@@ -66,6 +72,7 @@ const elements = {
   alertsMessage: document.querySelector("#alertsMessage"),
   adminPanel: document.querySelector("#adminPanel"),
   adminCreateUserForm: document.querySelector("#adminCreateUserForm"),
+  adminCreateUserButton: document.querySelector("#adminCreateUserButton"),
   adminNewUserName: document.querySelector("#adminNewUserName"),
   adminNewUserPin: document.querySelector("#adminNewUserPin"),
   adminNewUserManager: document.querySelector("#adminNewUserManager"),
@@ -126,9 +133,60 @@ function clearAlertsMessage() {
 function resetSessionState() {
   state.loggedInUser = null;
   state.currentUser = null;
+  state.users = [];
+  state.activeRequests = [];
   state.receivedAlerts = [];
   state.adminUsers = [];
+  state.highlightedAlertIds.clear();
   state.activeTab = "operations";
+}
+
+function saveSession() {
+  if (!state.loggedInUser || !state.currentUser) {
+    return;
+  }
+
+  localStorage.setItem(
+    SESSION_STORAGE_KEY,
+    JSON.stringify({
+      registeredUserId: state.loggedInUser.id,
+      name: state.loggedInUser.name,
+      permissions: state.loggedInUser.permissions,
+      allowedRoles: state.loggedInUser.allowedRoles,
+      defaultRole: state.loggedInUser.defaultRole,
+      currentRole: state.currentUser.currentRole,
+      currentLocation: state.currentUser.currentLocation,
+      currentChannel: state.currentUser.currentChannel,
+      status: state.currentUser.status
+    })
+  );
+  console.log("Saved session");
+}
+
+function clearSavedSession() {
+  localStorage.removeItem(SESSION_STORAGE_KEY);
+  localStorage.removeItem("bloomlink.session");
+  console.log("Session cleared");
+}
+
+function getSavedSession() {
+  try {
+    return JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY));
+  } catch (error) {
+    clearSavedSession();
+    return null;
+  }
+}
+
+function restoreSavedSession() {
+  const savedSession = getSavedSession();
+
+  if (!savedSession?.registeredUserId || !savedSession?.currentRole) {
+    return;
+  }
+
+  console.log("Attempting restore");
+  socket.emit("user:restore_session", savedSession);
 }
 
 function renderAlertsControl() {
@@ -322,6 +380,14 @@ function canCurrentUserRenderStockAlerts() {
   );
 }
 
+function canManageStockRequests() {
+  return (
+    state.currentUser?.permissions?.admin === true ||
+    state.currentUser?.permissions?.manager === true ||
+    state.currentUser?.currentRole === "Manager"
+  );
+}
+
 function isCurrentUserAdmin() {
   return state.currentUser?.permissions?.admin === true;
 }
@@ -413,11 +479,11 @@ function renderAdminPanel() {
           <span>Default role: ${user.defaultRole}</span>
           <span>Permissions: admin ${user.permissions.admin ? "yes" : "no"}, manager ${user.permissions.manager ? "yes" : "no"}, chef ${user.permissions.chef ? "yes" : "no"}</span>
           <div class="admin-button-row">
-            <button data-admin-action="toggle-manager" data-user-id="${user.id}">${managerText}</button>
-            <button data-admin-action="toggle-chef" data-user-id="${user.id}">${chefText}</button>
-            <button data-admin-action="${statusActionName}" data-user-id="${user.id}">${statusAction}</button>
-            <button data-admin-action="reset-pin" data-user-id="${user.id}">Reset PIN</button>
-            <button data-admin-action="delete" data-user-id="${user.id}">Delete</button>
+            <button type="button" data-admin-action="toggle-manager" data-user-id="${user.id}">${managerText}</button>
+            <button type="button" data-admin-action="toggle-chef" data-user-id="${user.id}">${chefText}</button>
+            <button type="button" data-admin-action="${statusActionName}" data-user-id="${user.id}">${statusAction}</button>
+            <button type="button" data-admin-action="reset-pin" data-user-id="${user.id}">Reset PIN</button>
+            <button type="button" data-admin-action="delete" data-user-id="${user.id}">Delete</button>
           </div>
         </article>
       `;
@@ -450,7 +516,7 @@ function renderAlerts() {
           <strong>${getRequestTitle(request)}</strong>
           <span>Requested by ${request.requestedBy.name} at ${formatTime(request.createdAt)}</span>
           <div class="button-row">
-            <button data-action="on_my_way" data-request-id="${request.id}" class="primary-button">On my way</button>
+            <button type="button" data-action="on_my_way" data-request-id="${request.id}" class="primary-button">On my way</button>
           </div>
         </article>
       `
@@ -459,6 +525,8 @@ function renderAlerts() {
 }
 
 function renderRequests() {
+  elements.clearCompletedButton.classList.toggle("hidden", !canManageStockRequests());
+
   if (state.activeRequests.length === 0) {
     elements.requestsList.className = "list empty";
     elements.requestsList.textContent = "No stock requests yet.";
@@ -486,7 +554,8 @@ function renderRequests() {
           </div>
           <span>Requested by ${request.requestedBy.name} at ${formatTime(request.createdAt)}</span>
           <span>${assignmentText}</span>
-          ${assignedToCurrentUser && request.status !== "delivered" ? `<button data-deliver-id="${request.id}" class="primary-button">Delivered</button>` : ""}
+          ${canManageStockRequests() ? `<button type="button" data-delete-request-id="${request.id}">Delete Request</button>` : ""}
+          ${assignedToCurrentUser && request.status !== "delivered" ? `<button type="button" data-deliver-id="${request.id}" class="primary-button">Delivered</button>` : ""}
         </article>
       `;
     })
@@ -533,6 +602,7 @@ function startShift(event) {
 
 function createStockRequest(event) {
   event.preventDefault();
+  console.log("Send Request tapped");
 
   if (!state.currentUser) {
     alert("Start your shift before creating a stock request.");
@@ -543,6 +613,23 @@ function createStockRequest(event) {
     location: elements.requestLocation.value,
     item: elements.requestItem.value
   });
+}
+
+function logoutUser() {
+  console.log("Logout clicked");
+  clearSavedSession();
+  resetSessionState();
+  showScreen("login");
+  renderAll();
+  socket.emit("user:logout");
+}
+
+function clearCompletedRequests() {
+  console.log("Clear completed clicked");
+
+  if (confirm("Clear all completed requests?")) {
+    socket.emit("stock:clear_completed");
+  }
 }
 
 function createAdminUser(event) {
@@ -562,18 +649,37 @@ function createAdminUser(event) {
 function handleListClick(event) {
   const responseButton = event.target.closest("[data-action]");
   const deliverButton = event.target.closest("[data-deliver-id]");
+  const deleteRequestButton = event.target.closest("[data-delete-request-id]");
 
   if (responseButton) {
+    event.preventDefault();
+    console.log("On my way tapped");
     socket.emit("stock:response", {
       requestId: responseButton.dataset.requestId,
       action: responseButton.dataset.action
     });
+    return;
   }
 
   if (deliverButton) {
+    event.preventDefault();
+    console.log("Delivered tapped");
     socket.emit("stock:delivered", {
       requestId: deliverButton.dataset.deliverId
     });
+    return;
+  }
+
+  if (deleteRequestButton) {
+    event.preventDefault();
+    console.log("Delete request clicked", deleteRequestButton.dataset.deleteRequestId);
+
+    if (confirm("Delete this request?")) {
+      socket.emit("stock:delete_request", {
+        requestId: deleteRequestButton.dataset.deleteRequestId
+      });
+    }
+    return;
   }
 }
 
@@ -652,6 +758,7 @@ elements.requestItem.value = "12oz Cups";
 
 socket.on("connect", () => {
   setConnectionStatus("Socket connected", true);
+  restoreSavedSession();
 });
 
 registerServiceWorker().catch(() => {
@@ -693,6 +800,36 @@ socket.on("user:session_started", (user) => {
   if (isCurrentUserAdmin()) {
     socket.emit("admin:users:list");
   }
+  saveSession();
+  renderAll();
+});
+
+socket.on("user:restore_success", (data) => {
+  console.log("Restore success");
+  state.loggedInUser = data.registeredUser;
+  state.currentUser = data.onlineUser;
+  state.receivedAlerts = [];
+  state.activeTab = "operations";
+  showScreen("app");
+  if (isCurrentUserAdmin()) {
+    socket.emit("admin:users:list");
+  }
+  saveSession();
+  renderAll();
+});
+
+socket.on("user:restore_failed", (data) => {
+  console.log("Restore failed", data?.message || "");
+  clearSavedSession();
+  resetSessionState();
+  showScreen("login");
+  renderAll();
+});
+
+socket.on("user:logged_out", () => {
+  clearSavedSession();
+  resetSessionState();
+  showScreen("login");
   renderAll();
 });
 
@@ -723,7 +860,8 @@ socket.on("stock:update", (requests) => {
   state.activeRequests = requests;
   // stock:update is public state. It updates Active Requests, but it never creates actionable alerts.
   state.receivedAlerts = state.receivedAlerts
-    .map((alert) => requests.find((request) => request.id === alert.id) || alert)
+    .map((alert) => requests.find((request) => request.id === alert.id))
+    .filter(Boolean)
     .filter((alert) => alert.status === "pending" && !alert.assignedTo);
   renderAll();
 });
@@ -756,24 +894,32 @@ socket.on("admin:error", (data) => {
 
 socket.on("user:account_deleted", (data) => {
   alert(data.message || "Your account was deleted.");
+  clearSavedSession();
   resetSessionState();
   showScreen("login");
 });
 
 socket.on("user:session_invalidated", (data) => {
   alert(data.message || "Your account was updated by an admin. Please log in again.");
+  clearSavedSession();
   resetSessionState();
   showScreen("login");
 });
 
-elements.loginForm.addEventListener("submit", loginUser);
-elements.shiftForm.addEventListener("submit", startShift);
-elements.stockForm.addEventListener("submit", createStockRequest);
+elements.loginForm.addEventListener("submit", (event) => event.preventDefault());
+elements.shiftForm.addEventListener("submit", (event) => event.preventDefault());
+elements.stockForm.addEventListener("submit", (event) => event.preventDefault());
+elements.adminCreateUserForm.addEventListener("submit", (event) => event.preventDefault());
+elements.loginButton.addEventListener("click", loginUser);
+elements.startShiftButton.addEventListener("click", startShift);
+elements.logoutButton.addEventListener("click", logoutUser);
+elements.sendRequestButton.addEventListener("click", createStockRequest);
+elements.clearCompletedButton.addEventListener("click", clearCompletedRequests);
 elements.enableAlertsButton.addEventListener("click", enableAlerts);
 elements.enablePushButton.addEventListener("click", enablePushNotifications);
 elements.alertsList.addEventListener("click", handleListClick);
 elements.requestsList.addEventListener("click", handleListClick);
-elements.adminCreateUserForm.addEventListener("submit", createAdminUser);
+elements.adminCreateUserButton.addEventListener("click", createAdminUser);
 elements.adminUsersList.addEventListener("click", handleAdminClick);
 elements.operationsTab.addEventListener("click", () => switchTab("operations"));
 elements.adminTab.addEventListener("click", () => switchTab("admin"));

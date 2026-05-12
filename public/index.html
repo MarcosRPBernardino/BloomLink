@@ -23,7 +23,7 @@
           <input id="userPin" type="password" inputmode="numeric" required>
         </label>
 
-        <button type="submit" class="primary-button">Login</button>
+        <button id="loginButton" type="button" class="primary-button">Login</button>
       </form>
       <p id="loginError" class="error-message hidden"></p>
     </section>
@@ -42,7 +42,7 @@
           <select id="currentLocation"></select>
         </label>
 
-        <button type="submit" class="primary-button">Start Shift</button>
+        <button id="startShiftButton" type="button" class="primary-button">Start Shift</button>
       </form>
     </section>
 
@@ -52,7 +52,10 @@
           <h1>BloomLink Stock MVP</h1>
           <p id="currentUserInfo">Real-time stock requests for event staff.</p>
         </div>
-        <span id="connectionStatus" class="status-label offline">Disconnected</span>
+        <div class="header-actions">
+          <span id="connectionStatus" class="status-label offline">Disconnected</span>
+          <button id="logoutButton" type="button">Logout</button>
+        </div>
       </header>
 
       <nav class="tab-bar">
@@ -85,7 +88,7 @@
               <select id="requestItem"></select>
             </label>
 
-            <button type="submit" class="primary-button">Send Request</button>
+            <button id="sendRequestButton" type="button" class="primary-button">Send Request</button>
           </form>
         </section>
 
@@ -95,7 +98,10 @@
         </section>
 
         <section class="panel wide">
-          <h2>Active Requests</h2>
+          <div class="request-header">
+            <h2>Active Requests</h2>
+            <button id="clearCompletedButton" type="button" class="hidden">Clear completed requests</button>
+          </div>
           <div id="requestsList" class="list empty">No stock requests yet.</div>
         </section>
 
@@ -130,7 +136,7 @@
               Chef permission
             </label>
 
-            <button type="submit" class="primary-button">Create User</button>
+            <button id="adminCreateUserButton" type="button" class="primary-button">Create User</button>
           </form>
 
           <p id="adminError" class="error-message hidden"></p>

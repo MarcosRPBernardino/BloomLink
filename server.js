@@ -111,6 +111,14 @@ function isEligibleStockRecipient(user) {
   );
 }
 
+function canManageStockRequests(user) {
+  return (
+    user?.permissions?.admin === true ||
+    user?.permissions?.manager === true ||
+    user?.currentRole === "Manager"
+  );
+}
+
 function storePushSubscription(userId, subscription) {
   if (!subscription?.endpoint) {
     throw new Error("Invalid push subscription.");
@@ -295,6 +303,74 @@ io.on("connection", (socket) => {
     socket.emit("user:session_started", getPublicOnlineUser(user));
     socket.emit("stock:update", getStockRequests());
     broadcastUsers();
+  });
+
+  socket.on("user:restore_session", (data) => {
+    console.log("Attempting restore", {
+      registeredUserId: data?.registeredUserId,
+      currentRole: data?.currentRole,
+      currentLocation: data?.currentLocation
+    });
+
+    const registeredUser = getRegisteredUserById(data?.registeredUserId);
+
+    if (!registeredUser || registeredUser.disabled) {
+      console.log("Restore failed", {
+        userFound: Boolean(registeredUser),
+        disabled: Boolean(registeredUser?.disabled)
+      });
+      socket.emit("user:restore_failed", {
+        message: "Saved session is no longer valid."
+      });
+      return;
+    }
+
+    if (!registeredUser.allowedRoles.includes(data?.currentRole)) {
+      console.log("Restore failed", {
+        roleAllowed: false
+      });
+      socket.emit("user:restore_failed", {
+        message: "Saved role is no longer allowed."
+      });
+      return;
+    }
+
+    const user = createOnlineUser(socket, registeredUser, {
+      currentRole: data.currentRole,
+      currentLocation: data.currentLocation
+    });
+    users.set(socket.id, user);
+    socket.user = user;
+    socket.data.registeredUser = registeredUser;
+
+    console.log("Restore success", {
+      userId: user.id,
+      name: user.name
+    });
+
+    socket.emit("user:restore_success", {
+      registeredUser: getPublicRegisteredUser(registeredUser),
+      onlineUser: getPublicOnlineUser(user)
+    });
+    socket.emit("stock:update", getStockRequests());
+    broadcastUsers();
+  });
+
+  socket.on("user:logout", () => {
+    const user = users.get(socket.id);
+
+    if (user) {
+      console.log("Logout received", {
+        userId: user.id,
+        name: user.name
+      });
+      users.delete(socket.id);
+      broadcastUsers();
+    }
+
+    socket.user = null;
+    socket.data.registeredUser = null;
+    socket.emit("user:logged_out");
   });
 
   socket.on("push:subscribe", (subscription) => {
@@ -502,6 +578,52 @@ io.on("connection", (socket) => {
     request.status = "delivered";
     request.deliveredAt = Date.now();
 
+    broadcastStockRequests();
+  });
+
+  socket.on("stock:clear_completed", () => {
+    const user = users.get(socket.id);
+    const hasPermission = canManageStockRequests(user);
+
+    console.log("Clear completed received");
+    console.log("Delete permission", hasPermission);
+
+    if (!hasPermission) {
+      return;
+    }
+
+    let removedCount = 0;
+
+    for (const [requestId, request] of stockRequests.entries()) {
+      if (request.status === "delivered" || request.status === "cancelled") {
+        stockRequests.delete(requestId);
+        removedCount += 1;
+      }
+    }
+
+    console.log("Completed removed count", removedCount);
+    broadcastStockRequests();
+  });
+
+  socket.on("stock:delete_request", (data) => {
+    const user = users.get(socket.id);
+    const requestId = String(data?.requestId || "").trim();
+    const hasPermission = canManageStockRequests(user);
+    const requestFound = stockRequests.has(requestId);
+
+    console.log("Delete request received", requestId);
+    console.log("Delete permission", hasPermission);
+    console.log("Request found", requestFound);
+
+    if (!hasPermission) {
+      return;
+    }
+
+    if (!requestFound) {
+      return;
+    }
+
+    stockRequests.delete(requestId);
     broadcastStockRequests();
   });
 

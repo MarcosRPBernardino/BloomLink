@@ -24,6 +24,8 @@ button {
   cursor: pointer;
   font-weight: 700;
   padding: 10px 14px;
+  pointer-events: auto;
+  touch-action: manipulation;
 }
 
 button:hover {
