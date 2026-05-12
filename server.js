@@ -45,6 +45,7 @@ const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || "";
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || "";
 const vapidSubject = process.env.VAPID_SUBJECT || "mailto:admin@bloomlink.live";
 const pushNotificationsEnabled = Boolean(vapidPublicKey && vapidPrivateKey);
+const PUSH_BATCH_WINDOW_MS = 45_000;
 
 if (pushNotificationsEnabled) {
   webPush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
@@ -139,6 +140,8 @@ function createPushSubscriptionRecord(user, subscription) {
     currentLocation: user.currentLocation,
     status: user.status,
     permissions: user.permissions,
+    pendingStockPushCount: 0,
+    stockPushBatchTimer: null,
     updatedAt: Date.now()
   };
 }
@@ -169,6 +172,10 @@ function removePushSubscription(userId, name, reason) {
 
   if (!record) {
     return;
+  }
+
+  if (record.stockPushBatchTimer) {
+    clearTimeout(record.stockPushBatchTimer);
   }
 
   pushSubscriptionsByUserId.delete(userId);
@@ -238,6 +245,94 @@ async function sendStockPushNotificationToActiveShiftUser(user, request) {
       console.error("Push notification failed:", error.message);
     }
   }
+}
+
+async function sendPushPayload(user, payload) {
+  const record = pushSubscriptionsByUserId.get(user.id);
+
+  if (!pushNotificationsEnabled) {
+    console.log("push skipped", user.name, "push not configured");
+    return false;
+  }
+
+  if (!record?.subscription) {
+    console.log("push skipped", user.name, "no subscription");
+    return false;
+  }
+
+  try {
+    await webPush.sendNotification(record.subscription, JSON.stringify(payload));
+    return true;
+  } catch (error) {
+    if (error.statusCode === 404 || error.statusCode === 410) {
+      removePushSubscription(user.id, user.name, `expired ${error.statusCode}`);
+    } else {
+      console.error("Push notification failed:", error.message);
+    }
+
+    return false;
+  }
+}
+
+async function sendStockPushNotificationToActiveShiftUser(user, request) {
+  const record = pushSubscriptionsByUserId.get(user.id);
+
+  if (!record?.subscription) {
+    console.log("push skipped", user.name, "no subscription");
+    return;
+  }
+
+  if (record.stockPushBatchTimer) {
+    record.pendingStockPushCount += 1;
+    console.log("push batched", user.name, record.pendingStockPushCount);
+    return;
+  }
+
+  const sent = await sendPushPayload(user, {
+    title: "\uD83D\uDEA8 Stock Request",
+    body: `${request.location} needs ${request.item}`,
+    requestId: request.id,
+    url: "https://bloomlink.live",
+    tag: `stock-${request.id}`,
+    renotify: false
+  });
+
+  if (sent) {
+    console.log("push sent immediately", user.name);
+  } else {
+    return;
+  }
+
+  record.pendingStockPushCount = 0;
+  record.stockPushBatchTimer = setTimeout(() => {
+    const latestRecord = pushSubscriptionsByUserId.get(user.id);
+
+    if (!latestRecord) {
+      return;
+    }
+
+    const pendingCount = latestRecord.pendingStockPushCount;
+    latestRecord.pendingStockPushCount = 0;
+    latestRecord.stockPushBatchTimer = null;
+
+    if (pendingCount > 0) {
+      sendPushPayload(user, {
+        title: "\uD83D\uDEA8 Stock Requests",
+        body: `You have ${pendingCount} pending stock requests`,
+        url: "https://bloomlink.live",
+        tag: "stock-summary",
+        renotify: true
+      })
+        .then((summarySent) => {
+          if (summarySent) {
+            console.log("push summary sent", user.name, pendingCount);
+          }
+        })
+        .catch((error) => {
+          console.error("Stock push summary failed:", error.message);
+        });
+    }
+  }, PUSH_BATCH_WINDOW_MS);
 }
 
 function pinMatches(user, pin) {
