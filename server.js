@@ -126,19 +126,58 @@ function canManageStockRequests(user) {
   );
 }
 
-function storePushSubscription(userId, subscription) {
+function createPushSubscriptionRecord(user, subscription) {
   if (!subscription?.endpoint) {
     throw new Error("Invalid push subscription.");
   }
 
-  if (!pushSubscriptionsByUserId.has(userId)) {
-    pushSubscriptionsByUserId.set(userId, new Map());
+  return {
+    userId: user.id,
+    name: user.name,
+    subscription,
+    currentRole: user.currentRole,
+    currentLocation: user.currentLocation,
+    status: user.status,
+    permissions: user.permissions,
+    updatedAt: Date.now()
+  };
+}
+
+function storePushSubscription(user, subscription) {
+  const record = createPushSubscriptionRecord(user, subscription);
+  pushSubscriptionsByUserId.set(user.id, record);
+  console.log("push subscription saved", user.name);
+}
+
+function updatePushSubscriptionMetadata(user) {
+  const record = pushSubscriptionsByUserId.get(user.id);
+
+  if (!record) {
+    return;
   }
 
-  pushSubscriptionsByUserId.get(userId).set(subscription.endpoint, subscription);
+  record.name = user.name;
+  record.currentRole = user.currentRole;
+  record.currentLocation = user.currentLocation;
+  record.status = user.status;
+  record.permissions = user.permissions;
+  record.updatedAt = Date.now();
+}
+
+function removePushSubscription(userId, name, reason) {
+  const record = pushSubscriptionsByUserId.get(userId);
+
+  if (!record) {
+    return;
+  }
+
+  pushSubscriptionsByUserId.delete(userId);
+  console.log("push subscription removed", name || record.name, reason);
 }
 
 async function sendStockPushNotification(user, request) {
+  return sendStockPushNotificationToActiveShiftUser(user, request);
+
   if (!pushNotificationsEnabled) {
     return;
   }
@@ -164,6 +203,39 @@ async function sendStockPushNotification(user, request) {
       } else {
         console.error("Push notification failed:", error.message);
       }
+    }
+  }
+}
+
+async function sendStockPushNotificationToActiveShiftUser(user, request) {
+  const record = pushSubscriptionsByUserId.get(user.id);
+
+  if (!pushNotificationsEnabled) {
+    console.log("push skipped", user.name, "push not configured");
+    return;
+  }
+
+  if (!record?.subscription) {
+    console.log("push skipped", user.name, "no subscription");
+    return;
+  }
+
+  const payload = JSON.stringify({
+    title: "\uD83D\uDEA8 Stock Request",
+    body: `${request.location} needs ${request.item}`,
+    requestId: request.id,
+    url: "https://bloomlink.live",
+    tag: `stock-${request.id}`
+  });
+
+  try {
+    await webPush.sendNotification(record.subscription, payload);
+    console.log("push sent to", user.name);
+  } catch (error) {
+    if (error.statusCode === 404 || error.statusCode === 410) {
+      removePushSubscription(user.id, user.name, `expired ${error.statusCode}`);
+    } else {
+      console.error("Push notification failed:", error.message);
     }
   }
 }
@@ -253,6 +325,7 @@ function removeOnlineSessionsForRegisteredUser(registeredUserId) {
   }
 
   activeShiftUsers.delete(registeredUserId);
+  removePushSubscription(registeredUserId, user?.name, "account deleted");
   broadcastUsers();
 }
 
@@ -266,6 +339,7 @@ function invalidateOnlineSessionsForRegisteredUser(registeredUserId) {
   }
 
   activeShiftUsers.delete(registeredUserId);
+  removePushSubscription(registeredUserId, user?.name, "session invalidated");
   broadcastUsers();
 }
 
@@ -320,6 +394,7 @@ io.on("connection", (socket) => {
     activeShiftUsers.set(registeredUser.id, user);
     socket.user = user;
     socket.data.activeShiftUserId = registeredUser.id;
+    updatePushSubscriptionMetadata(user);
 
     console.log("active shift started", user.name);
 
@@ -366,6 +441,7 @@ io.on("connection", (socket) => {
     socket.user = user;
     socket.data.registeredUser = registeredUser;
     socket.data.activeShiftUserId = registeredUser.id;
+    updatePushSubscriptionMetadata(user);
 
     console.log("Restore success", {
       userId: user.id,
@@ -386,6 +462,7 @@ io.on("connection", (socket) => {
     if (user) {
       console.log("active shift logout", user.name);
       activeShiftUsers.delete(user.id);
+      removePushSubscription(user.id, user.name, "logout");
       broadcastUsers();
     }
 
@@ -413,7 +490,7 @@ io.on("connection", (socket) => {
     }
 
     try {
-      storePushSubscription(user.id, subscription);
+      storePushSubscription(user, subscription);
       socket.emit("push:subscribed");
     } catch (error) {
       socket.emit("push:error", {
@@ -555,7 +632,31 @@ io.on("connection", (socket) => {
     for (const user of eligibleRecipients) {
       console.log("stock:alert emitted to", user.name);
       io.to(user.socketId).emit("stock:alert", request);
-      sendStockPushNotification(user, request).catch((error) => {
+    }
+
+    const pushCandidates = getActiveShiftUsers();
+
+    console.log("push subscribers count", pushSubscriptionsByUserId.size);
+
+    for (const user of pushCandidates) {
+      console.log("push candidate", user.name, user.currentRole, user.connectionStatus);
+
+      if (user.id === requester.id) {
+        console.log("push skipped", user.name, "request creator");
+        continue;
+      }
+
+      if (user.status === "on_break") {
+        console.log("push skipped", user.name, "on break");
+        continue;
+      }
+
+      if (!isEligibleStockRecipient(user)) {
+        console.log("push skipped", user.name, "not eligible");
+        continue;
+      }
+
+      sendStockPushNotificationToActiveShiftUser(user, request).catch((error) => {
         console.error("Stock push notification failed:", error.message);
       });
     }

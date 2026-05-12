@@ -21,7 +21,10 @@ self.addEventListener("push", (event) => {
       body: payload.body,
       icon: "/icons/icon.svg",
       badge: "/icons/icon.svg",
+      tag: payload.tag,
+      renotify: true,
       data: {
+        requestId: payload.requestId,
         url: payload.url || "https://bloomlink.live"
       }
     })
