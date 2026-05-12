@@ -1,3 +1,11 @@
+try {
+  require("dotenv").config();
+} catch (error) {
+  if (error.code !== "MODULE_NOT_FOUND") {
+    throw error;
+  }
+}
+
 const express = require("express");
 const http = require("http");
 const path = require("path");
@@ -18,13 +26,7 @@ const {
 
 const app = express();
 const server = http.createServer(app);
-
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
-});
+const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
@@ -37,6 +39,10 @@ const stockRequests = new Map();
 initializeDatabase();
 
 app.use(express.static(path.join(__dirname, "public")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
 function createId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;

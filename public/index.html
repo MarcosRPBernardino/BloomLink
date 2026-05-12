@@ -13,12 +13,12 @@
       <form id="loginForm" class="form-grid">
         <label>
           Name
-          <input id="userName" type="text" value="Ana" required>
+          <input id="userName" type="text" required>
         </label>
 
         <label>
           PIN
-          <input id="userPin" type="password" value="3333" inputmode="numeric" required>
+          <input id="userPin" type="password" inputmode="numeric" required>
         </label>
 
         <button type="submit" class="primary-button">Login</button>
@@ -59,6 +59,15 @@
       </nav>
 
       <div id="operationsView" class="app-layout">
+        <section class="panel wide">
+          <h2>Alerts</h2>
+          <div class="alerts-control">
+            <span id="alertsStatus" class="status-label offline">Alerts: Disabled</span>
+            <button id="enableAlertsButton" type="button" class="primary-button">Enable Alerts</button>
+          </div>
+          <p id="alertsMessage" class="error-message hidden"></p>
+        </section>
+
         <section class="panel">
           <h2>Create Stock Request</h2>
           <form id="stockForm" class="form-grid">

@@ -193,8 +193,21 @@ select {
   border-color: #f59e0b;
 }
 
+.alert-card-highlight {
+  animation: alertPulse 1.1s ease-in-out 3;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
 .request-card {
   border-color: #c8d3e2;
+}
+
+.alerts-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .request-header {
@@ -257,6 +270,20 @@ select {
 .assigned {
   background: #dbeafe;
   color: #1e40af;
+}
+
+@keyframes alertPulse {
+  0% {
+    background: #fbfcfe;
+  }
+
+  50% {
+    background: #eff6ff;
+  }
+
+  100% {
+    background: #fbfcfe;
+  }
 }
 
 @media (max-width: 760px) {

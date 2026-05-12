@@ -1,4 +1,4 @@
-const SERVER_URL = window.SERVER_URL || window.location.origin;
+const SERVER_URL = window.location.origin;
 
 const locations = [
   "Kitchen",
@@ -30,7 +30,10 @@ const state = {
   activeRequests: [],
   receivedAlerts: [],
   adminUsers: [],
-  activeTab: "operations"
+  activeTab: "operations",
+  alertsEnabled: false,
+  audioContext: null,
+  highlightedAlertIds: new Set()
 };
 
 const elements = {
@@ -54,6 +57,9 @@ const elements = {
   loginError: document.querySelector("#loginError"),
   loggedUserName: document.querySelector("#loggedUserName"),
   currentUserInfo: document.querySelector("#currentUserInfo"),
+  alertsStatus: document.querySelector("#alertsStatus"),
+  enableAlertsButton: document.querySelector("#enableAlertsButton"),
+  alertsMessage: document.querySelector("#alertsMessage"),
   adminPanel: document.querySelector("#adminPanel"),
   adminCreateUserForm: document.querySelector("#adminCreateUserForm"),
   adminNewUserName: document.querySelector("#adminNewUserName"),
@@ -103,12 +109,123 @@ function clearLoginError() {
   elements.loginError.classList.add("hidden");
 }
 
+function showAlertsMessage(message) {
+  elements.alertsMessage.textContent = message;
+  elements.alertsMessage.classList.remove("hidden");
+}
+
+function clearAlertsMessage() {
+  elements.alertsMessage.textContent = "";
+  elements.alertsMessage.classList.add("hidden");
+}
+
 function resetSessionState() {
   state.loggedInUser = null;
   state.currentUser = null;
   state.receivedAlerts = [];
   state.adminUsers = [];
   state.activeTab = "operations";
+}
+
+function renderAlertsControl() {
+  elements.alertsStatus.textContent = state.alertsEnabled ? "Alerts: Enabled" : "Alerts: Disabled";
+  elements.alertsStatus.className = `status-label ${state.alertsEnabled ? "online" : "offline"}`;
+  elements.enableAlertsButton.disabled = state.alertsEnabled;
+}
+
+function getAudioContext() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+  if (!AudioContextClass) {
+    return null;
+  }
+
+  if (!state.audioContext) {
+    state.audioContext = new AudioContextClass();
+  }
+
+  return state.audioContext;
+}
+
+async function enableAlerts() {
+  clearAlertsMessage();
+
+  const audioContext = getAudioContext();
+
+  if (!audioContext) {
+    state.alertsEnabled = true;
+    renderAlertsControl();
+    return;
+  }
+
+  try {
+    await audioContext.resume();
+    state.alertsEnabled = true;
+  } catch (error) {
+    state.alertsEnabled = false;
+    showAlertsMessage("Sound alerts are blocked. Tap Enable Alerts.");
+  }
+
+  renderAlertsControl();
+}
+
+function playAlertBeep() {
+  const audioContext = getAudioContext();
+
+  if (!audioContext || audioContext.state !== "running") {
+    showAlertsMessage("Sound alerts are blocked. Tap Enable Alerts.");
+    state.alertsEnabled = false;
+    renderAlertsControl();
+    return;
+  }
+
+  try {
+    const pattern = [
+      { start: 0, duration: 0.2, frequency: 920 },
+      { start: 0.32, duration: 0.2, frequency: 980 },
+      { start: 0.64, duration: 0.28, frequency: 1040 }
+    ];
+
+    for (const beep of pattern) {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const startTime = audioContext.currentTime + beep.start;
+      const endTime = startTime + beep.duration;
+
+      oscillator.type = "square";
+      oscillator.frequency.setValueAtTime(beep.frequency, startTime);
+      gain.gain.setValueAtTime(0.001, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.32, startTime + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.001, endTime);
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(startTime);
+      oscillator.stop(endTime + 0.02);
+    }
+  } catch (error) {
+    showAlertsMessage("Sound alerts are blocked. Tap Enable Alerts.");
+  }
+}
+
+function vibrateForStockAlert() {
+  if ("vibrate" in navigator) {
+    navigator.vibrate([300, 100, 300, 100, 500]);
+  }
+}
+
+function triggerStockAlertFeedback(requestId) {
+  state.highlightedAlertIds.add(requestId);
+
+  if (state.alertsEnabled) {
+    clearAlertsMessage();
+    playAlertBeep();
+    vibrateForStockAlert();
+  }
+
+  setTimeout(() => {
+    state.highlightedAlertIds.delete(requestId);
+    renderAlerts();
+  }, 4000);
 }
 
 function getRequestTitle(request) {
@@ -253,7 +370,7 @@ function renderAlerts() {
   elements.alertsList.innerHTML = actionableAlerts
     .map(
       (request) => `
-        <article class="row-card alert-card">
+        <article class="row-card alert-card ${state.highlightedAlertIds.has(request.id) ? "alert-card-highlight" : ""}">
           <strong>${getRequestTitle(request)}</strong>
           <span>Requested by ${request.requestedBy.name} at ${formatTime(request.createdAt)}</span>
           <div class="button-row">
@@ -302,6 +419,7 @@ function renderRequests() {
 
 function renderAll() {
   renderTabs();
+  renderAlertsControl();
   renderUsers();
   renderAlerts();
   renderRequests();
@@ -515,6 +633,7 @@ socket.on("stock:alert", (request) => {
 
   if (!alreadyAdded) {
     state.receivedAlerts.unshift(request);
+    triggerStockAlertFeedback(request.id);
   }
 
   renderAlerts();
@@ -558,6 +677,7 @@ socket.on("user:session_invalidated", (data) => {
 elements.loginForm.addEventListener("submit", loginUser);
 elements.shiftForm.addEventListener("submit", startShift);
 elements.stockForm.addEventListener("submit", createStockRequest);
+elements.enableAlertsButton.addEventListener("click", enableAlerts);
 elements.alertsList.addEventListener("click", handleListClick);
 elements.requestsList.addEventListener("click", handleListClick);
 elements.adminCreateUserForm.addEventListener("submit", createAdminUser);
