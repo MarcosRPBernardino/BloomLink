@@ -33,7 +33,9 @@ const state = {
   activeTab: "operations",
   alertsEnabled: false,
   audioContext: null,
-  highlightedAlertIds: new Set()
+  highlightedAlertIds: new Set(),
+  pushEnabled: false,
+  serviceWorkerRegistration: null
 };
 
 const elements = {
@@ -59,6 +61,8 @@ const elements = {
   currentUserInfo: document.querySelector("#currentUserInfo"),
   alertsStatus: document.querySelector("#alertsStatus"),
   enableAlertsButton: document.querySelector("#enableAlertsButton"),
+  pushStatus: document.querySelector("#pushStatus"),
+  enablePushButton: document.querySelector("#enablePushButton"),
   alertsMessage: document.querySelector("#alertsMessage"),
   adminPanel: document.querySelector("#adminPanel"),
   adminCreateUserForm: document.querySelector("#adminCreateUserForm"),
@@ -131,6 +135,9 @@ function renderAlertsControl() {
   elements.alertsStatus.textContent = state.alertsEnabled ? "Alerts: Enabled" : "Alerts: Disabled";
   elements.alertsStatus.className = `status-label ${state.alertsEnabled ? "online" : "offline"}`;
   elements.enableAlertsButton.disabled = state.alertsEnabled;
+  elements.pushStatus.textContent = state.pushEnabled ? "Push: Enabled" : "Push: Disabled";
+  elements.pushStatus.className = `status-label ${state.pushEnabled ? "online" : "offline"}`;
+  elements.enablePushButton.disabled = state.pushEnabled;
 }
 
 function getAudioContext() {
@@ -210,6 +217,75 @@ function playAlertBeep() {
 function vibrateForStockAlert() {
   if ("vibrate" in navigator) {
     navigator.vibrate([300, 100, 300, 100, 500]);
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let index = 0; index < rawData.length; index += 1) {
+    outputArray[index] = rawData.charCodeAt(index);
+  }
+
+  return outputArray;
+}
+
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) {
+    throw new Error("Service workers are not supported in this browser.");
+  }
+
+  if (!state.serviceWorkerRegistration) {
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/service-worker.js");
+  }
+
+  return state.serviceWorkerRegistration;
+}
+
+async function getVapidPublicKey() {
+  const response = await fetch("/api/push/public-key");
+  const data = await response.json();
+
+  if (!data.publicKey) {
+    throw new Error("Push notifications are not configured on the server.");
+  }
+
+  return data.publicKey;
+}
+
+async function enablePushNotifications() {
+  clearAlertsMessage();
+
+  if (!("Notification" in window) || !("PushManager" in window)) {
+    showAlertsMessage("Push notifications are not supported in this browser.");
+    return;
+  }
+
+  try {
+    const permission = await Notification.requestPermission();
+
+    if (permission !== "granted") {
+      showAlertsMessage("Push notifications were not allowed.");
+      return;
+    }
+
+    const registration = await registerServiceWorker();
+    const publicKey = await getVapidPublicKey();
+    let subscription = await registration.pushManager.getSubscription();
+
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+    }
+
+    socket.emit("push:subscribe", subscription.toJSON());
+  } catch (error) {
+    showAlertsMessage(error.message || "Could not enable push notifications.");
   }
 }
 
@@ -578,6 +654,10 @@ socket.on("connect", () => {
   setConnectionStatus("Socket connected", true);
 });
 
+registerServiceWorker().catch(() => {
+  // Push setup still works later from the Enable Push Notifications button if supported.
+});
+
 socket.on("disconnect", () => {
   setConnectionStatus("Socket disconnected", false);
 });
@@ -652,6 +732,18 @@ socket.on("stock:claim_failed", (data) => {
   alert(data.message || "This request has already been assigned.");
 });
 
+socket.on("push:subscribed", () => {
+  state.pushEnabled = true;
+  clearAlertsMessage();
+  renderAlertsControl();
+});
+
+socket.on("push:error", (data) => {
+  state.pushEnabled = false;
+  showAlertsMessage(data.message || "Could not enable push notifications.");
+  renderAlertsControl();
+});
+
 socket.on("admin:users:list", (users) => {
   state.adminUsers = users;
   clearAdminError();
@@ -678,6 +770,7 @@ elements.loginForm.addEventListener("submit", loginUser);
 elements.shiftForm.addEventListener("submit", startShift);
 elements.stockForm.addEventListener("submit", createStockRequest);
 elements.enableAlertsButton.addEventListener("click", enableAlerts);
+elements.enablePushButton.addEventListener("click", enablePushNotifications);
 elements.alertsList.addEventListener("click", handleListClick);
 elements.requestsList.addEventListener("click", handleListClick);
 elements.adminCreateUserForm.addEventListener("submit", createAdminUser);

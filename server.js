@@ -10,6 +10,7 @@ const express = require("express");
 const http = require("http");
 const path = require("path");
 const { Server } = require("socket.io");
+const webPush = require("web-push");
 const {
   dbPath,
   initializeDatabase,
@@ -32,13 +33,31 @@ const PORT = process.env.PORT || 3000;
 
 // Registered users are persistent in SQLite. Online users stay in memory because they are live socket sessions.
 const users = new Map();
+const pushSubscriptionsByUserId = new Map();
 
 // Stock requests are still in memory for this MVP phase; only registered users are persisted in Phase 2A.
 const stockRequests = new Map();
 
 initializeDatabase();
 
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || "";
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || "";
+const vapidSubject = process.env.VAPID_SUBJECT || "mailto:admin@bloomlink.live";
+const pushNotificationsEnabled = Boolean(vapidPublicKey && vapidPrivateKey);
+
+if (pushNotificationsEnabled) {
+  webPush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+} else {
+  console.warn("Web Push is not configured. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY.");
+}
+
 app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/api/push/public-key", (req, res) => {
+  res.json({
+    publicKey: vapidPublicKey
+  });
+});
 
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
@@ -90,6 +109,48 @@ function isEligibleStockRecipient(user) {
     user.currentRole === "KP" ||
     user.currentRole === "Stock Runner"
   );
+}
+
+function storePushSubscription(userId, subscription) {
+  if (!subscription?.endpoint) {
+    throw new Error("Invalid push subscription.");
+  }
+
+  if (!pushSubscriptionsByUserId.has(userId)) {
+    pushSubscriptionsByUserId.set(userId, new Map());
+  }
+
+  pushSubscriptionsByUserId.get(userId).set(subscription.endpoint, subscription);
+}
+
+async function sendStockPushNotification(user, request) {
+  if (!pushNotificationsEnabled) {
+    return;
+  }
+
+  const userSubscriptions = pushSubscriptionsByUserId.get(user.id);
+
+  if (!userSubscriptions || userSubscriptions.size === 0) {
+    return;
+  }
+
+  const payload = JSON.stringify({
+    title: "🚨 Stock Request",
+    body: `${request.location} needs ${request.item}`,
+    url: "https://bloomlink.live"
+  });
+
+  for (const [endpoint, subscription] of userSubscriptions.entries()) {
+    try {
+      await webPush.sendNotification(subscription, payload);
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) {
+        userSubscriptions.delete(endpoint);
+      } else {
+        console.error("Push notification failed:", error.message);
+      }
+    }
+  }
 }
 
 function pinMatches(user, pin) {
@@ -236,6 +297,33 @@ io.on("connection", (socket) => {
     broadcastUsers();
   });
 
+  socket.on("push:subscribe", (subscription) => {
+    const user = users.get(socket.id);
+
+    if (!user) {
+      socket.emit("push:error", {
+        message: "Start your shift before enabling push notifications."
+      });
+      return;
+    }
+
+    if (!pushNotificationsEnabled) {
+      socket.emit("push:error", {
+        message: "Push notifications are not configured on the server."
+      });
+      return;
+    }
+
+    try {
+      storePushSubscription(user.id, subscription);
+      socket.emit("push:subscribed");
+    } catch (error) {
+      socket.emit("push:error", {
+        message: error.message || "Could not save push subscription."
+      });
+    }
+  });
+
   socket.on("admin:users:list", () => {
     handleAdminAction(socket, () => {});
   });
@@ -354,6 +442,9 @@ io.on("connection", (socket) => {
 
       if (isEligibleStockRecipient(user)) {
         io.to(user.socketId).emit("stock:alert", request);
+        sendStockPushNotification(user, request).catch((error) => {
+          console.error("Stock push notification failed:", error.message);
+        });
       }
     }
 

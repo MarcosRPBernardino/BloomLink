@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BloomLink Stock MVP</title>
+  <meta name="theme-color" content="#2563eb">
+  <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -64,6 +66,8 @@
           <div class="alerts-control">
             <span id="alertsStatus" class="status-label offline">Alerts: Disabled</span>
             <button id="enableAlertsButton" type="button" class="primary-button">Enable Alerts</button>
+            <span id="pushStatus" class="status-label offline">Push: Disabled</span>
+            <button id="enablePushButton" type="button" class="primary-button">Enable Push Notifications</button>
           </div>
           <p id="alertsMessage" class="error-message hidden"></p>
         </section>

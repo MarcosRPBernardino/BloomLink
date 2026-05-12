@@ -36,9 +36,20 @@ Copy `.env.example` to `.env` for local overrides:
 
 ```text
 PORT=3000
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:admin@bloomlink.live
 ```
 
 Do not commit `.env`.
+
+Generate VAPID keys with:
+
+```bash
+npm run vapid:generate
+```
+
+Put the generated public/private keys into `.env` or the production environment.
 
 ## SQLite database
 
@@ -71,3 +82,25 @@ This structure is ready for:
 - platforms like Render or Railway that provide `PORT`
 
 No cloud-specific configuration is included yet.
+
+## PWA and Web Push
+
+The app includes:
+
+- `public/manifest.json`
+- `public/service-worker.js`
+- an in-app `Enable Push Notifications` button
+
+Push notifications are used only for Stock Requests and only for users who are eligible to receive `stock:alert`.
+
+To enable push on a device:
+
+1. Log in.
+2. Start shift.
+3. Open Operations.
+4. Tap `Enable Push Notifications`.
+5. Allow browser notifications.
+
+Android browsers usually support web push directly after permission is granted.
+
+On iPhone/iOS, web push support is most reliable after installing the PWA to the Home Screen, then opening BloomLink from that installed icon and enabling notifications there.
