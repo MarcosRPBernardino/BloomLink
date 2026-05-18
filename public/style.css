@@ -1,17 +1,17 @@
 :root {
-  --bg: #f5f7f8;
+  --bg: #f3f5f7;
   --surface: #ffffff;
-  --surface-soft: #fafbf7;
-  --surface-muted: #f0f3f1;
+  --surface-soft: #f8fafc;
+  --surface-muted: #eef2f5;
   --text: #202923;
   --muted: #6c756e;
-  --border: #dde5df;
-  --border-strong: #c5d2c8;
+  --border: #dce3e8;
+  --border-strong: #c7d2da;
   --green: #3f7d4a;
   --green-dark: #2f6339;
-  --green-soft: #e4f0e2;
+  --green-soft: #e4efe7;
   --amber: #9b6a18;
-  --amber-soft: #fff4d6;
+  --amber-soft: #fff3d0;
   --red: #9f3e36;
   --red-soft: #fbe8e5;
   --blue: #37687f;
@@ -327,7 +327,7 @@ button:focus-visible {
 .request-card {
   border-color: var(--border-strong);
   border-left: 4px solid var(--green);
-  background: #fbfdfb;
+  background: #ffffff;
 }
 
 .request-card .primary-button,
@@ -418,8 +418,8 @@ button:focus-visible {
 }
 
 .assigned {
-  background: #e8eee4;
-  color: #4b6048;
+  background: #e8eef2;
+  color: #455761;
 }
 
 @keyframes alertPulse {
