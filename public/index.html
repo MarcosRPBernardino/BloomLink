@@ -69,10 +69,29 @@
           <div class="alerts-control">
             <span id="alertsStatus" class="status-label offline">Alerts: Disabled</span>
             <button id="enableAlertsButton" type="button" class="primary-button">Enable Alerts</button>
-            <span id="pushStatus" class="status-label offline">Push: Disabled</span>
+            <span id="pushStatus" class="status-label offline">Push: Not enabled</span>
             <button id="enablePushButton" type="button" class="primary-button">Enable Push Notifications</button>
           </div>
           <p id="alertsMessage" class="error-message hidden"></p>
+        </section>
+
+        <section id="managerSettingsPanel" class="panel wide hidden">
+          <h2>Manager Settings</h2>
+          <div class="form-grid">
+            <label class="checkbox-row">
+              <input id="autoEndEnabled" type="checkbox">
+              Enable automatic shift ending
+            </label>
+
+            <label>
+              Auto end time
+              <input id="autoEndTime" type="time" value="21:00">
+            </label>
+
+            <button id="saveSettingsButton" type="button" class="primary-button">Save settings</button>
+          </div>
+          <p id="nextAutoEndText" class="muted-text">Next auto end: Today 21:00</p>
+          <p id="settingsMessage" class="error-message hidden"></p>
         </section>
 
         <section class="panel">
@@ -106,7 +125,16 @@
         </section>
 
         <section class="panel wide">
-          <h2>Online Users</h2>
+          <div class="request-header">
+            <h2>Online Users</h2>
+            <div id="shiftControls" class="shift-controls hidden">
+              <label class="checkbox-row">
+                <input id="keepSelfConnected" type="checkbox" checked>
+                Keep myself connected
+              </label>
+              <button id="endAllShiftsButton" type="button">End All Shifts</button>
+            </div>
+          </div>
           <div id="usersList" class="list empty">No users online.</div>
         </section>
       </div>

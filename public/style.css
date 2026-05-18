@@ -225,6 +225,17 @@ select {
   gap: 8px;
 }
 
+.shift-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.shift-controls.hidden {
+  display: none;
+}
+
 .admin-form {
   margin-bottom: 16px;
 }

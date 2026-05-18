@@ -23,6 +23,7 @@ const stockItems = [
 
 const socket = io(SERVER_URL);
 const SESSION_STORAGE_KEY = "bloomlinkSession";
+const ALERTS_STORAGE_KEY = "bloomlinkAlertsEnabled";
 
 const state = {
   loggedInUser: null,
@@ -36,6 +37,12 @@ const state = {
   audioContext: null,
   highlightedAlertIds: new Set(),
   pushEnabled: false,
+  pushState: "not_enabled",
+  settings: {
+    autoEndEnabled: true,
+    autoEndTime: "21:00",
+    lastAutoEndDate: null
+  },
   serviceWorkerRegistration: null
 };
 
@@ -56,6 +63,9 @@ const elements = {
   stockForm: document.querySelector("#stockForm"),
   sendRequestButton: document.querySelector("#sendRequestButton"),
   clearCompletedButton: document.querySelector("#clearCompletedButton"),
+  shiftControls: document.querySelector("#shiftControls"),
+  keepSelfConnected: document.querySelector("#keepSelfConnected"),
+  endAllShiftsButton: document.querySelector("#endAllShiftsButton"),
   userName: document.querySelector("#userName"),
   userPin: document.querySelector("#userPin"),
   currentRole: document.querySelector("#currentRole"),
@@ -69,6 +79,12 @@ const elements = {
   enableAlertsButton: document.querySelector("#enableAlertsButton"),
   pushStatus: document.querySelector("#pushStatus"),
   enablePushButton: document.querySelector("#enablePushButton"),
+  managerSettingsPanel: document.querySelector("#managerSettingsPanel"),
+  autoEndEnabled: document.querySelector("#autoEndEnabled"),
+  autoEndTime: document.querySelector("#autoEndTime"),
+  saveSettingsButton: document.querySelector("#saveSettingsButton"),
+  nextAutoEndText: document.querySelector("#nextAutoEndText"),
+  settingsMessage: document.querySelector("#settingsMessage"),
   alertsMessage: document.querySelector("#alertsMessage"),
   adminPanel: document.querySelector("#adminPanel"),
   adminCreateUserForm: document.querySelector("#adminCreateUserForm"),
@@ -151,6 +167,16 @@ function clearAlertsMessage() {
   elements.alertsMessage.classList.add("hidden");
 }
 
+function showSettingsMessage(message) {
+  elements.settingsMessage.textContent = message;
+  elements.settingsMessage.classList.remove("hidden");
+}
+
+function clearSettingsMessage() {
+  elements.settingsMessage.textContent = "";
+  elements.settingsMessage.classList.add("hidden");
+}
+
 function resetSessionState() {
   state.loggedInUser = null;
   state.currentUser = null;
@@ -214,9 +240,18 @@ function renderAlertsControl() {
   elements.alertsStatus.textContent = state.alertsEnabled ? "Alerts: Enabled" : "Alerts: Disabled";
   elements.alertsStatus.className = `status-label ${state.alertsEnabled ? "online" : "offline"}`;
   elements.enableAlertsButton.disabled = state.alertsEnabled;
-  elements.pushStatus.textContent = state.pushEnabled ? "Push: Enabled" : "Push: Disabled";
-  elements.pushStatus.className = `status-label ${state.pushEnabled ? "online" : "offline"}`;
-  elements.enablePushButton.disabled = state.pushEnabled;
+
+  const pushLabels = {
+    enabled: "Push: Enabled",
+    not_enabled: "Push: Not enabled",
+    blocked: "Push: Blocked",
+    unsupported: "Push: Unsupported"
+  };
+
+  elements.pushStatus.textContent = pushLabels[state.pushState] || "Push: Not enabled";
+  elements.pushStatus.className = `status-label ${state.pushState === "enabled" ? "online" : "offline"}`;
+  elements.enablePushButton.textContent = "Enable Push Notifications";
+  elements.enablePushButton.disabled = state.pushState === "unsupported" || state.pushState === "blocked";
 }
 
 function getAudioContext() {
@@ -240,6 +275,7 @@ async function enableAlerts() {
 
   if (!audioContext) {
     state.alertsEnabled = true;
+    localStorage.setItem(ALERTS_STORAGE_KEY, "true");
     renderAlertsControl();
     return;
   }
@@ -247,6 +283,7 @@ async function enableAlerts() {
   try {
     await audioContext.resume();
     state.alertsEnabled = true;
+    localStorage.setItem(ALERTS_STORAGE_KEY, "true");
   } catch (error) {
     state.alertsEnabled = false;
     showAlertsMessage("Sound alerts are blocked. Tap Enable Alerts.");
@@ -259,7 +296,7 @@ function playAlertBeep() {
   const audioContext = getAudioContext();
 
   if (!audioContext || audioContext.state !== "running") {
-    showAlertsMessage("Sound alerts are blocked. Tap Enable Alerts.");
+    showAlertsMessage("Tap Enable Alerts again to unlock sound.");
     state.alertsEnabled = false;
     renderAlertsControl();
     return;
@@ -289,7 +326,7 @@ function playAlertBeep() {
       oscillator.stop(endTime + 0.02);
     }
   } catch (error) {
-    showAlertsMessage("Sound alerts are blocked. Tap Enable Alerts.");
+    showAlertsMessage("Tap Enable Alerts again to unlock sound.");
   }
 }
 
@@ -339,7 +376,9 @@ async function enablePushNotifications() {
   clearAlertsMessage();
 
   if (!("Notification" in window) || !("PushManager" in window)) {
-    showAlertsMessage("Push notifications are not supported in this browser.");
+    state.pushState = "unsupported";
+    renderAlertsControl();
+    showAlertsMessage("Push unsupported on this device/browser.");
     return;
   }
 
@@ -347,6 +386,8 @@ async function enablePushNotifications() {
     const permission = await Notification.requestPermission();
 
     if (permission !== "granted") {
+      state.pushState = permission === "denied" ? "blocked" : "not_enabled";
+      renderAlertsControl();
       showAlertsMessage("Push notifications were not allowed.");
       return;
     }
@@ -366,6 +407,84 @@ async function enablePushNotifications() {
   } catch (error) {
     showAlertsMessage(error.message || "Could not enable push notifications.");
   }
+}
+
+async function refreshPushStatus() {
+  if (!("serviceWorker" in navigator) || !("Notification" in window) || !("PushManager" in window)) {
+    state.pushState = "unsupported";
+    renderAlertsControl();
+    showAlertsMessage("Push unsupported on this device/browser.");
+    return;
+  }
+
+  if (Notification.permission === "denied") {
+    state.pushState = "blocked";
+    renderAlertsControl();
+    return;
+  }
+
+  if (Notification.permission !== "granted") {
+    state.pushState = "not_enabled";
+    renderAlertsControl();
+    return;
+  }
+
+  try {
+    const registration = await registerServiceWorker();
+    const subscription = await registration.pushManager.getSubscription();
+    state.pushState = subscription ? "enabled" : "not_enabled";
+    state.pushEnabled = Boolean(subscription);
+  } catch (error) {
+    state.pushState = "not_enabled";
+  }
+
+  renderAlertsControl();
+}
+
+function requestBackendPushStatus() {
+  if (state.currentUser) {
+    socket.emit("push:status");
+  }
+}
+
+function getNextAutoEndLabel(autoEndTime) {
+  const [hours, minutes] = autoEndTime.split(":").map(Number);
+  const now = new Date();
+  const next = new Date();
+  next.setHours(hours, minutes, 0, 0);
+  const todayKey = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0")
+  ].join("-");
+
+  const dayLabel =
+    state.settings.lastAutoEndDate === todayKey || now.getTime() > next.getTime()
+      ? "Tomorrow"
+      : "Today";
+  console.log("next auto end calculated", `${dayLabel} ${autoEndTime}`);
+  return `${dayLabel} ${autoEndTime}`;
+}
+
+function renderSettings() {
+  const canUseSettings = canControlShifts();
+  elements.managerSettingsPanel.classList.toggle("hidden", !canUseSettings);
+
+  if (!canUseSettings) {
+    return;
+  }
+
+  elements.autoEndEnabled.checked = state.settings.autoEndEnabled;
+  elements.autoEndTime.value = state.settings.autoEndTime;
+  elements.nextAutoEndText.textContent = `Next auto end: ${getNextAutoEndLabel(state.settings.autoEndTime)}`;
+}
+
+function saveSettings() {
+  clearSettingsMessage();
+  socket.emit("settings:update", {
+    autoEndEnabled: elements.autoEndEnabled.checked,
+    autoEndTime: elements.autoEndTime.value
+  });
 }
 
 function triggerStockAlertFeedback(requestId) {
@@ -427,6 +546,10 @@ function canManageStockRequests() {
   );
 }
 
+function canControlShifts() {
+  return canManageStockRequests();
+}
+
 function isCurrentUserAdmin() {
   return state.currentUser?.permissions?.admin === true;
 }
@@ -465,6 +588,8 @@ function switchTab(tabName) {
 }
 
 function renderUsers() {
+  elements.shiftControls.classList.toggle("hidden", !canControlShifts());
+
   if (state.users.length === 0) {
     elements.usersList.className = "list empty";
     elements.usersList.textContent = "No users online.";
@@ -479,6 +604,13 @@ function renderUsers() {
         ? "Connected"
         : `Disconnected · last seen ${formatLastSeen(user.lastSeen)}`;
 
+      const canEndThisShift = canControlShifts() && user.id !== state.currentUser?.id;
+      const pushText = user.pushStatus?.lastPushError
+        ? "Push: Error"
+        : user.pushStatus?.pushSubscribed
+          ? "Push: Subscribed"
+          : "Push: Not subscribed";
+
       return `
         <article class="row-card">
           <strong>${user.name}</strong>
@@ -488,6 +620,8 @@ function renderUsers() {
             ${user.status === "on_break" ? "On break" : "Available"}
           </span>
           <span class="status-label ${isConnected ? "online" : "offline"}">Connection: ${connectionText}</span>
+          ${canControlShifts() ? `<span class="status-label ${user.pushStatus?.lastPushError ? "offline" : user.pushStatus?.pushSubscribed ? "online" : "offline"}">${pushText}</span>` : ""}
+          ${canEndThisShift ? `<button type="button" data-end-shift-user-id="${user.id}">End Shift</button>` : ""}
         </article>
       `;
     })
@@ -610,6 +744,7 @@ function renderRequests() {
 function renderAll() {
   renderTabs();
   renderAlertsControl();
+  renderSettings();
   renderUsers();
   renderAlerts();
   renderRequests();
@@ -677,6 +812,16 @@ function clearCompletedRequests() {
   }
 }
 
+function endAllShifts() {
+  if (!confirm("End all active shifts?")) {
+    return;
+  }
+
+  socket.emit("admin:shift:end_all", {
+    keepSelf: elements.keepSelfConnected.checked
+  });
+}
+
 function createAdminUser(event) {
   event.preventDefault();
   clearAdminError();
@@ -695,6 +840,18 @@ function handleListClick(event) {
   const responseButton = event.target.closest("[data-action]");
   const deliverButton = event.target.closest("[data-deliver-id]");
   const deleteRequestButton = event.target.closest("[data-delete-request-id]");
+  const endShiftButton = event.target.closest("[data-end-shift-user-id]");
+
+  if (endShiftButton) {
+    event.preventDefault();
+
+    if (confirm("End shift for this user?")) {
+      socket.emit("admin:shift:end_user", {
+        userId: endShiftButton.dataset.endShiftUserId
+      });
+    }
+    return;
+  }
 
   if (responseButton) {
     event.preventDefault();
@@ -800,10 +957,12 @@ fillSelect(elements.requestItem, stockItems);
 elements.currentLocation.value = "Shack (Front)";
 elements.requestLocation.value = "Shack (Front)";
 elements.requestItem.value = "12oz Cups";
+state.alertsEnabled = localStorage.getItem(ALERTS_STORAGE_KEY) === "true";
 
 socket.on("connect", () => {
-  setConnectionStatus("Socket connected", true);
+  setConnectionStatus("Connection: Connected", true);
   restoreSavedSession();
+  refreshPushStatus();
 });
 
 registerServiceWorker().catch(() => {
@@ -811,7 +970,7 @@ registerServiceWorker().catch(() => {
 });
 
 socket.on("disconnect", () => {
-  setConnectionStatus("Socket disconnected", false);
+  setConnectionStatus("Connection: Disconnected", false);
 });
 
 socket.on("users:update", (users) => {
@@ -845,7 +1004,12 @@ socket.on("user:session_started", (user) => {
   if (isCurrentUserAdmin()) {
     socket.emit("admin:users:list");
   }
+  if (canControlShifts()) {
+    socket.emit("settings:get");
+  }
   saveSession();
+  refreshPushStatus();
+  requestBackendPushStatus();
   renderAll();
 });
 
@@ -859,7 +1023,12 @@ socket.on("user:restore_success", (data) => {
   if (isCurrentUserAdmin()) {
     socket.emit("admin:users:list");
   }
+  if (canControlShifts()) {
+    socket.emit("settings:get");
+  }
   saveSession();
+  refreshPushStatus();
+  requestBackendPushStatus();
   renderAll();
 });
 
@@ -929,14 +1098,45 @@ socket.on("stock:claim_failed", (data) => {
 
 socket.on("push:subscribed", () => {
   state.pushEnabled = true;
+  state.pushState = "enabled";
   clearAlertsMessage();
   renderAlertsControl();
+  requestBackendPushStatus();
 });
 
 socket.on("push:error", (data) => {
   state.pushEnabled = false;
+  state.pushState = "not_enabled";
   showAlertsMessage(data.message || "Could not enable push notifications.");
   renderAlertsControl();
+});
+
+socket.on("push:status_result", (data) => {
+  state.pushEnabled = data.subscribed === true;
+
+  if (data.lastPushError) {
+    state.pushState = "not_enabled";
+  } else if (data.subscribed) {
+    state.pushState = "enabled";
+  } else if ("Notification" in window && Notification.permission === "denied") {
+    state.pushState = "blocked";
+  } else if (!("Notification" in window) || !("PushManager" in window)) {
+    state.pushState = "unsupported";
+  } else {
+    state.pushState = "not_enabled";
+  }
+
+  renderAlertsControl();
+});
+
+socket.on("settings:update", (settings) => {
+  state.settings = settings;
+  clearSettingsMessage();
+  renderSettings();
+});
+
+socket.on("settings:error", (data) => {
+  showSettingsMessage(data.message || "Settings action failed.");
 });
 
 socket.on("admin:users:list", (users) => {
@@ -963,6 +1163,14 @@ socket.on("user:session_invalidated", (data) => {
   showScreen("login");
 });
 
+socket.on("user:force_logout", (data) => {
+  alert(data.message || "Your shift was ended by a manager.");
+  clearSavedSession();
+  resetSessionState();
+  showScreen("login");
+  renderAll();
+});
+
 elements.loginForm.addEventListener("submit", (event) => event.preventDefault());
 elements.shiftForm.addEventListener("submit", (event) => event.preventDefault());
 elements.stockForm.addEventListener("submit", (event) => event.preventDefault());
@@ -972,10 +1180,13 @@ elements.startShiftButton.addEventListener("click", startShift);
 elements.logoutButton.addEventListener("click", logoutUser);
 elements.sendRequestButton.addEventListener("click", createStockRequest);
 elements.clearCompletedButton.addEventListener("click", clearCompletedRequests);
+elements.endAllShiftsButton.addEventListener("click", endAllShifts);
+elements.saveSettingsButton.addEventListener("click", saveSettings);
 elements.enableAlertsButton.addEventListener("click", enableAlerts);
 elements.enablePushButton.addEventListener("click", enablePushNotifications);
 elements.alertsList.addEventListener("click", handleListClick);
 elements.requestsList.addEventListener("click", handleListClick);
+elements.usersList.addEventListener("click", handleListClick);
 elements.adminCreateUserButton.addEventListener("click", createAdminUser);
 elements.adminUsersList.addEventListener("click", handleAdminClick);
 elements.operationsTab.addEventListener("click", () => switchTab("operations"));

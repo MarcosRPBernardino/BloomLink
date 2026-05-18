@@ -35,6 +35,12 @@ const PORT = process.env.PORT || 3000;
 // A shift remains active until explicit logout, even if the phone/browser socket disconnects.
 const activeShiftUsers = new Map();
 const pushSubscriptionsByUserId = new Map();
+const endedShiftUserIds = new Set();
+const settings = {
+  autoEndEnabled: true,
+  autoEndTime: "21:00",
+  lastAutoEndDate: null
+};
 
 // Stock requests are still in memory for this MVP phase; only registered users are persisted in Phase 2A.
 const stockRequests = new Map();
@@ -73,6 +79,8 @@ function getActiveShiftUsers() {
 }
 
 function getPublicActiveShiftUser(user) {
+  const pushRecord = pushSubscriptionsByUserId.get(user.id);
+
   return {
     id: user.id,
     name: user.name,
@@ -85,6 +93,12 @@ function getPublicActiveShiftUser(user) {
     connectionStatus: user.connectionStatus,
     lastSeen: user.lastSeen,
     startedAt: user.startedAt,
+    pushStatus: {
+      pushSubscribed: Boolean(pushRecord?.subscription),
+      pushSubscriptionUpdatedAt: pushRecord?.updatedAt || null,
+      lastPushSentAt: pushRecord?.lastPushSentAt || null,
+      lastPushError: pushRecord?.lastPushError || null
+    },
     online: user.connectionStatus === "connected"
   };
 }
@@ -126,6 +140,10 @@ function canManageStockRequests(user) {
   );
 }
 
+function canControlShifts(user) {
+  return canManageStockRequests(user);
+}
+
 function createPushSubscriptionRecord(user, subscription) {
   if (!subscription?.endpoint) {
     throw new Error("Invalid push subscription.");
@@ -147,6 +165,7 @@ function storePushSubscription(user, subscription) {
   const record = createPushSubscriptionRecord(user, subscription);
   pushSubscriptionsByUserId.set(user.id, record);
   console.log("push subscription saved", user.name);
+  console.log("push status updated", user.name);
 }
 
 function updatePushSubscriptionMetadata(user) {
@@ -162,6 +181,7 @@ function updatePushSubscriptionMetadata(user) {
   record.status = user.status;
   record.permissions = user.permissions;
   record.updatedAt = Date.now();
+  console.log("push status updated", user.name);
 }
 
 function removePushSubscription(userId, name, reason) {
@@ -173,6 +193,7 @@ function removePushSubscription(userId, name, reason) {
 
   pushSubscriptionsByUserId.delete(userId);
   console.log("push subscription removed", name || record.name, reason);
+  console.log("push status updated", name || record.name);
 }
 
 async function sendStockPushNotification(user, request) {
@@ -255,12 +276,19 @@ async function sendPushPayload(user, payload) {
 
   try {
     await webPush.sendNotification(record.subscription, JSON.stringify(payload));
+    record.lastPushSentAt = Date.now();
+    record.lastPushError = null;
+    console.log("push status updated", user.name);
+    broadcastUsers();
     return true;
   } catch (error) {
     if (error.statusCode === 404 || error.statusCode === 410) {
       removePushSubscription(user.id, user.name, `expired ${error.statusCode}`);
     } else {
+      record.lastPushError = error.message || "Push failed";
       console.error("Push notification failed:", error.message);
+      console.log("push status updated", user.name);
+      broadcastUsers();
     }
 
     return false;
@@ -323,7 +351,8 @@ function createActiveShiftUser(socket, registeredUser, data) {
     status: "available",
     connectionStatus: "connected",
     lastSeen: now,
-    startedAt: existingUser?.startedAt || now
+    startedAt: existingUser?.startedAt || now,
+    autoEndedAt: existingUser?.autoEndedAt || null
   };
 }
 
@@ -392,6 +421,124 @@ function invalidateOnlineSessionsForRegisteredUser(registeredUserId) {
   broadcastUsers();
 }
 
+function endActiveShiftForUser(userId, message) {
+  const user = activeShiftUsers.get(userId);
+
+  if (!user) {
+    return null;
+  }
+
+  endedShiftUserIds.add(user.id);
+
+  if (user.connectionStatus === "connected" && user.socketId) {
+    io.to(user.socketId).emit("user:force_logout", {
+      message
+    });
+    console.log("force logout sent to", user.name);
+  }
+
+  activeShiftUsers.delete(user.id);
+  removePushSubscription(user.id, user.name, "shift ended");
+
+  return user;
+}
+
+function getPublicSettings() {
+  return {
+    autoEndEnabled: settings.autoEndEnabled,
+    autoEndTime: settings.autoEndTime,
+    lastAutoEndDate: settings.lastAutoEndDate
+  };
+}
+
+function getLocalDateKey(timestamp) {
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function isSameLocalCalendarDay(firstTimestamp, secondTimestamp) {
+  const firstDate = new Date(firstTimestamp);
+  const secondDate = new Date(secondTimestamp);
+
+  return (
+    firstDate.getFullYear() === secondDate.getFullYear() &&
+    firstDate.getMonth() === secondDate.getMonth() &&
+    firstDate.getDate() === secondDate.getDate()
+  );
+}
+
+function isPastAutoEndTime(nowTimestamp) {
+  const [hours, minutes] = settings.autoEndTime.split(":").map(Number);
+  const now = new Date(nowTimestamp);
+  const autoEndAt = new Date(nowTimestamp);
+  autoEndAt.setHours(hours, minutes, 0, 0);
+
+  return now.getTime() >= autoEndAt.getTime();
+}
+
+async function sendAutoEndNotification(user) {
+  const sent = await sendPushPayload(user, {
+    title: "Shift ended",
+    body: "Your BloomLink shift was automatically ended for today.",
+    url: "https://bloomlink.live",
+    tag: `shift-ended-${Date.now()}-${user.id}`,
+    renotify: true
+  });
+
+  if (sent) {
+    console.log("auto end notification sent", user.name);
+  }
+}
+
+async function autoEndDueShifts() {
+  const now = Date.now();
+  const today = getLocalDateKey(now);
+
+  if (!settings.autoEndEnabled || !isPastAutoEndTime(now)) {
+    return;
+  }
+
+  if (settings.lastAutoEndDate === today) {
+    console.log("auto end already fired today");
+    return;
+  }
+
+  settings.lastAutoEndDate = today;
+  console.log("auto end fired for date", today);
+
+  let endedCount = 0;
+
+  for (const user of getActiveShiftUsers()) {
+    if (user.autoEndedAt || !isSameLocalCalendarDay(user.startedAt, now)) {
+      continue;
+    }
+
+    user.autoEndedAt = now;
+    await sendAutoEndNotification(user);
+
+    if (user.connectionStatus === "connected" && user.socketId) {
+      io.to(user.socketId).emit("user:force_logout", {
+        message: "Your shift was automatically ended for today."
+      });
+      console.log("force logout sent to", user.name);
+    }
+
+    activeShiftUsers.delete(user.id);
+    removePushSubscription(user.id, user.name, "auto end shift");
+    endedShiftUserIds.add(user.id);
+    endedCount += 1;
+    console.log("auto end shift", user.name);
+  }
+
+  console.log("auto ended shifts count", endedCount);
+  broadcastUsers();
+  io.emit("settings:update", getPublicSettings());
+}
+
 io.on("connection", (socket) => {
   socket.on("user:login", (data) => {
     const receivedName = String(data?.name || "").trim();
@@ -419,6 +566,7 @@ io.on("connection", (socket) => {
     }
 
     socket.data.registeredUser = registeredUser;
+    endedShiftUserIds.delete(registeredUser.id);
     socket.emit("user:login_success", getPublicRegisteredUser(registeredUser));
   });
 
@@ -438,6 +586,8 @@ io.on("connection", (socket) => {
       });
       return;
     }
+
+    endedShiftUserIds.delete(registeredUser.id);
 
     const user = createActiveShiftUser(socket, registeredUser, data || {});
     activeShiftUsers.set(registeredUser.id, user);
@@ -468,6 +618,16 @@ io.on("connection", (socket) => {
       });
       socket.emit("user:restore_failed", {
         message: "Saved session is no longer valid."
+      });
+      return;
+    }
+
+    if (endedShiftUserIds.has(registeredUser.id)) {
+      console.log("Restore failed", {
+        shiftEnded: true
+      });
+      socket.emit("user:restore_failed", {
+        message: "Your previous shift was ended by a manager."
       });
       return;
     }
@@ -541,11 +701,37 @@ io.on("connection", (socket) => {
     try {
       storePushSubscription(user, subscription);
       socket.emit("push:subscribed");
+      broadcastUsers();
     } catch (error) {
       socket.emit("push:error", {
         message: error.message || "Could not save push subscription."
       });
     }
+  });
+
+  socket.on("push:status", () => {
+    const user = getActiveShiftUserForSocket(socket);
+
+    if (!user) {
+      socket.emit("push:status_result", {
+        subscribed: false,
+        updatedAt: null,
+        lastPushSentAt: null,
+        lastPushError: "Start your shift before checking push status."
+      });
+      return;
+    }
+
+    const record = pushSubscriptionsByUserId.get(user.id);
+    console.log("push status requested", user.name);
+    console.log("push subscription exists", user.name, Boolean(record?.subscription));
+
+    socket.emit("push:status_result", {
+      subscribed: Boolean(record?.subscription),
+      updatedAt: record?.updatedAt || null,
+      lastPushSentAt: record?.lastPushSentAt || null,
+      lastPushError: record?.lastPushError || null
+    });
   });
 
   socket.on("admin:users:list", () => {
@@ -633,6 +819,110 @@ io.on("connection", (socket) => {
       deleteRegisteredUser(userId);
       removeOnlineSessionsForRegisteredUser(targetUser.id);
     });
+  });
+
+  socket.on("admin:shift:end_user", (data) => {
+    const requester = getActiveShiftUserForSocket(socket);
+
+    if (!canControlShifts(requester)) {
+      socket.emit("admin:error", {
+        message: "Manager or admin permission is required."
+      });
+      return;
+    }
+
+    const userId = String(data?.userId || "").trim();
+
+    if (!userId || userId === requester.id) {
+      socket.emit("admin:error", {
+        message: "You can only end another user's shift."
+      });
+      return;
+    }
+
+    const endedUser = endActiveShiftForUser(userId, "Your shift was ended by a manager.");
+
+    if (!endedUser) {
+      socket.emit("admin:error", {
+        message: "Active shift not found."
+      });
+      return;
+    }
+
+    console.log("admin ended shift for", endedUser.name);
+    broadcastUsers();
+  });
+
+  socket.on("admin:shift:end_all", (data) => {
+    const requester = getActiveShiftUserForSocket(socket);
+
+    if (!canControlShifts(requester)) {
+      socket.emit("admin:error", {
+        message: "Manager or admin permission is required."
+      });
+      return;
+    }
+
+    const keepSelf = data?.keepSelf !== false;
+    let endedCount = 0;
+
+    for (const user of getActiveShiftUsers()) {
+      if (keepSelf && user.id === requester.id) {
+        continue;
+      }
+
+      const endedUser = endActiveShiftForUser(user.id, "Your shift was ended by a manager.");
+
+      if (endedUser) {
+        endedCount += 1;
+      }
+    }
+
+    console.log("admin ended all shifts", endedCount);
+    broadcastUsers();
+  });
+
+  socket.on("settings:get", () => {
+    const user = getActiveShiftUserForSocket(socket);
+
+    if (!canControlShifts(user)) {
+      socket.emit("settings:error", {
+        message: "Manager or admin permission is required."
+      });
+      return;
+    }
+
+    socket.emit("settings:update", getPublicSettings());
+  });
+
+  socket.on("settings:update", (data) => {
+    const user = getActiveShiftUserForSocket(socket);
+
+    if (!canControlShifts(user)) {
+      socket.emit("settings:error", {
+        message: "Manager or admin permission is required."
+      });
+      return;
+    }
+
+    const nextTime = String(data?.autoEndTime || "").trim();
+
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(nextTime)) {
+      socket.emit("settings:error", {
+        message: "Auto end time must use HH:MM format."
+      });
+      return;
+    }
+
+    settings.autoEndEnabled = data?.autoEndEnabled === true;
+    settings.autoEndTime = nextTime;
+
+    if (!isPastAutoEndTime(Date.now())) {
+      settings.lastAutoEndDate = null;
+    }
+
+    console.log("settings updated", getPublicSettings());
+    io.emit("settings:update", getPublicSettings());
   });
 
   socket.on("stock:create", (data) => {
@@ -821,6 +1111,7 @@ io.on("connection", (socket) => {
       user.socketId = null;
       user.lastSeen = Date.now();
       console.log("socket disconnected but shift kept", user.name);
+      console.log("push subscription kept after disconnect", user.name);
       broadcastUsers();
     }
 
@@ -832,3 +1123,9 @@ server.listen(PORT, () => {
   console.log(`BloomLink Stock MVP server running on port ${PORT}`);
   console.log(`SQLite database: ${dbPath}`);
 });
+
+setInterval(() => {
+  autoEndDueShifts().catch((error) => {
+    console.error("Auto end shift check failed:", error.message);
+  });
+}, 5 * 60 * 1000);
