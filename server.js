@@ -37,7 +37,7 @@ const activeShiftUsers = new Map();
 const pushSubscriptionsByUserId = new Map();
 const endedShiftUserIds = new Set();
 const settings = {
-  autoEndEnabled: true,
+  autoEndEnabled: false,
   autoEndTime: "21:00",
   lastAutoEndDate: null
 };

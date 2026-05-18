@@ -39,7 +39,7 @@ const state = {
   pushEnabled: false,
   pushState: "not_enabled",
   settings: {
-    autoEndEnabled: true,
+    autoEndEnabled: false,
     autoEndTime: "21:00",
     lastAutoEndDate: null
   },

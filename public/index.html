@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BloomLink Stock MVP</title>
-  <meta name="theme-color" content="#2563eb">
+  <meta name="theme-color" content="#3f7d4a">
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -49,7 +49,7 @@
     <section id="appScreen" class="hidden">
       <header class="app-header">
         <div>
-          <h1>BloomLink Stock MVP</h1>
+          <h1>BloomLink</h1>
           <p id="currentUserInfo">Real-time stock requests for event staff.</p>
         </div>
         <div class="header-actions">
@@ -64,7 +64,7 @@
       </nav>
 
       <div id="operationsView" class="app-layout">
-        <section class="panel wide">
+        <section class="panel wide alerts-panel">
           <h2>Alerts</h2>
           <div class="alerts-control">
             <span id="alertsStatus" class="status-label offline">Alerts: Disabled</span>
@@ -75,7 +75,7 @@
           <p id="alertsMessage" class="error-message hidden"></p>
         </section>
 
-        <section id="managerSettingsPanel" class="panel wide hidden">
+        <section id="managerSettingsPanel" class="panel wide settings-panel hidden">
           <h2>Manager Settings</h2>
           <div class="form-grid">
             <label class="checkbox-row">
@@ -94,7 +94,7 @@
           <p id="settingsMessage" class="error-message hidden"></p>
         </section>
 
-        <section class="panel">
+        <section class="panel create-request-panel">
           <h2>Create Stock Request</h2>
           <form id="stockForm" class="form-grid">
             <label>
@@ -111,12 +111,12 @@
           </form>
         </section>
 
-        <section class="panel">
+        <section class="panel stock-alerts-panel">
           <h2>Stock Alerts Received</h2>
           <div id="alertsList" class="list empty">No alerts received yet.</div>
         </section>
 
-        <section class="panel wide">
+        <section class="panel wide active-requests-panel">
           <div class="request-header">
             <h2>Active Requests</h2>
             <button id="clearCompletedButton" type="button" class="hidden">Clear completed requests</button>
@@ -124,7 +124,7 @@
           <div id="requestsList" class="list empty">No stock requests yet.</div>
         </section>
 
-        <section class="panel wide">
+        <section class="panel wide online-users-panel">
           <div class="request-header">
             <h2>Online Users</h2>
             <div id="shiftControls" class="shift-controls hidden">
