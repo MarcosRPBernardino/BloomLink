@@ -9,17 +9,101 @@ const locations = [
   "Floor (upstairs)"
 ];
 
-const stockItems = [
-  "12oz Cups",
-  "8oz Cups",
-  "Coffee Beans",
-  "Milk",
-  "Oat Milk",
-  "Lids",
-  "Napkins",
-  "Sugar",
-  "Till Roll"
-];
+const stockItemsByCategory = {
+  "Cups & Containers": [
+    "12oz Cups",
+    "8oz Cups",
+    "Clear Cups",
+    "12oz Lids",
+    "8oz Lids",
+    "Clear Lids",
+    "Açaí Bowl 12oz",
+    "Açaí Bowl 8oz",
+    "Açaí Lids",
+    "Soup Container",
+    "Soup Lids",
+    "2oz Container (Jam/Cream)",
+    "2oz Lids (Jam/Cream)"
+  ],
+  Packaging: [
+    "Takeaway Box (Closed)",
+    "Takeaway Box (Open)",
+    "Salad Container (Clear)",
+    "Large Takeaway Bag",
+    "Small Takeaway Bag",
+    "Front Film Paper Bag",
+    "Cling Film"
+  ],
+  "Service & Counter": [
+    "Napkins",
+    "White Greaseproof Paper",
+    "Brown Greaseproof Paper",
+    "Wooden Stirrers",
+    "Wooden Knife",
+    "Wooden Fork",
+    "Wooden Spoon",
+    "Till Roll",
+    "Handheld Card Machine Roll"
+  ],
+  "Cleaning & Waste": [
+    "50L Bin Bags (Black)",
+    "Compostable Bin Bags"
+  ],
+  "Coffee & Hot Chocolate": [
+    "Coffee Beans",
+    "Decaf Coffee",
+    "Chocolate Powder",
+    "Marshmallows"
+  ],
+  Tea: [
+    "Tea (Black Tea)",
+    "Decaf Tea",
+    "Earl Grey Tea",
+    "Green Tea",
+    "Ginger Lemon Tea",
+    "Rooibos Tea",
+    "Mixed Berries Tea",
+    "Camomile Tea",
+    "Apple Tea",
+    "Peppermint Tea"
+  ],
+  "Dairy & Dairy Alternatives": [
+    "Butter",
+    "Full Fat Milk",
+    "Low Fat Milk",
+    "Oat Milk",
+    "Almond Milk",
+    "Soy Milk",
+    "Coconut Milk"
+  ],
+  "Syrups & Sweeteners": [
+    "Hazelnut Syrup",
+    "Vanilla Syrup",
+    "Sugar-Free Vanilla Syrup",
+    "Caramel Syrup",
+    "Brown Sugar",
+    "White Sugar",
+    "Sweetener"
+  ],
+  Seasoning: [
+    "Salt",
+    "Pepper"
+  ],
+  "Ice Cream & Açaí": [
+    "Açaí Mix",
+    "Ice Cream Mix",
+    "Ice Cream Cones",
+    "Ice Cream Tubs",
+    "Strawberry Topping (Ice Cream)",
+    "Blueberry Topping (Ice Cream)",
+    "Chocolate Topping (Ice Cream)"
+  ],
+  Ice: [
+    "Ice"
+  ]
+};
+
+const stockCategories = Object.keys(stockItemsByCategory);
 
 const socket = io(SERVER_URL);
 const SESSION_STORAGE_KEY = "bloomlinkSession";
@@ -43,7 +127,8 @@ const state = {
     autoEndTime: "21:00",
     lastAutoEndDate: null
   },
-  serviceWorkerRegistration: null
+  serviceWorkerRegistration: null,
+  lastSelectedStockCategory: "Cups & Containers"
 };
 
 const elements = {
@@ -71,6 +156,7 @@ const elements = {
   currentRole: document.querySelector("#currentRole"),
   currentLocation: document.querySelector("#currentLocation"),
   requestLocation: document.querySelector("#requestLocation"),
+  requestCategory: document.querySelector("#requestCategory"),
   requestItem: document.querySelector("#requestItem"),
   loginError: document.querySelector("#loginError"),
   loggedUserName: document.querySelector("#loggedUserName"),
@@ -102,6 +188,22 @@ const elements = {
 
 function fillSelect(select, values) {
   select.innerHTML = values.map((value) => `<option value="${value}">${value}</option>`).join("");
+}
+
+function updateRequestItemsForCategory(category) {
+  const items = stockItemsByCategory[category] || [];
+  const previousItem = elements.requestItem.value;
+
+  fillSelect(elements.requestItem, items);
+
+  if (items.includes(previousItem)) {
+    elements.requestItem.value = previousItem;
+  }
+}
+
+function handleRequestCategoryChange() {
+  state.lastSelectedStockCategory = elements.requestCategory.value;
+  updateRequestItemsForCategory(state.lastSelectedStockCategory);
 }
 
 function formatTime(timestamp) {
@@ -953,9 +1055,11 @@ function handleAdminClick(event) {
 
 fillSelect(elements.currentLocation, locations);
 fillSelect(elements.requestLocation, locations);
-fillSelect(elements.requestItem, stockItems);
+fillSelect(elements.requestCategory, stockCategories);
 elements.currentLocation.value = "Shack (Front)";
 elements.requestLocation.value = "Shack (Front)";
+elements.requestCategory.value = state.lastSelectedStockCategory;
+updateRequestItemsForCategory(state.lastSelectedStockCategory);
 elements.requestItem.value = "12oz Cups";
 state.alertsEnabled = localStorage.getItem(ALERTS_STORAGE_KEY) === "true";
 
@@ -1184,6 +1288,7 @@ elements.endAllShiftsButton.addEventListener("click", endAllShifts);
 elements.saveSettingsButton.addEventListener("click", saveSettings);
 elements.enableAlertsButton.addEventListener("click", enableAlerts);
 elements.enablePushButton.addEventListener("click", enablePushNotifications);
+elements.requestCategory.addEventListener("change", handleRequestCategoryChange);
 elements.alertsList.addEventListener("click", handleListClick);
 elements.requestsList.addEventListener("click", handleListClick);
 elements.usersList.addEventListener("click", handleListClick);
