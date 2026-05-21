@@ -71,6 +71,18 @@
             <button id="enableAlertsButton" type="button" class="primary-button">Enable Alerts</button>
             <span id="pushStatus" class="status-label offline">Push: Not enabled</span>
             <button id="enablePushButton" type="button" class="primary-button">Enable Push Notifications</button>
+            <button id="iphoneHelpButton" type="button" class="secondary-button">iPhone setup help</button>
+          </div>
+          <div id="iphoneHelpCard" class="iphone-help-card hidden">
+            <strong>iPhone notifications:</strong>
+            <ol>
+              <li>Open BloomLink in Safari</li>
+              <li>Tap Share</li>
+              <li>Add to Home Screen</li>
+              <li>Open BloomLink from the Home Screen icon</li>
+              <li>Tap Enable Push Notifications</li>
+            </ol>
+            <p>Older iOS versions may not support web push notifications.</p>
           </div>
           <p id="alertsMessage" class="error-message hidden"></p>
         </section>
@@ -131,7 +143,10 @@
 
         <section class="panel wide online-users-panel">
           <div class="request-header">
-            <h2>Online Users</h2>
+            <div>
+              <h2>Online Users</h2>
+              <p id="teamCount" class="section-subtitle">0 active team members</p>
+            </div>
             <div id="shiftControls" class="shift-controls hidden">
               <label class="checkbox-row">
                 <input id="keepSelfConnected" type="checkbox" checked>

@@ -77,6 +77,18 @@ button:active {
   border-color: var(--green-dark);
 }
 
+.secondary-button {
+  min-height: 38px;
+  border-color: var(--border);
+  background: var(--surface-soft);
+  color: var(--green-dark);
+}
+
+.secondary-button:hover {
+  background: var(--green-soft);
+  border-color: var(--green);
+}
+
 .app-header {
   position: sticky;
   top: 0;
@@ -289,6 +301,12 @@ button:focus-visible {
   font-size: 14px;
 }
 
+.section-subtitle {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .row-card {
   display: grid;
   gap: 6px;
@@ -306,6 +324,11 @@ button:focus-visible {
 .row-card span:not(.status-label) {
   color: var(--muted);
   font-size: 13px;
+}
+
+.timestamp-text {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .alert-card {
@@ -344,6 +367,30 @@ button:focus-visible {
 
 .alerts-control button {
   min-height: 38px;
+}
+
+.iphone-help-card {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.iphone-help-card strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.iphone-help-card ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.iphone-help-card p {
+  margin: 0;
 }
 
 .request-header {

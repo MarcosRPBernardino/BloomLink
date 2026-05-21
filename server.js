@@ -946,6 +946,7 @@ io.on("connection", (socket) => {
       assignedTo: null,
       responses: [],
       createdAt: Date.now(),
+      assignedAt: null,
       deliveredAt: null
     };
 
@@ -1034,6 +1035,7 @@ io.on("connection", (socket) => {
       name: user.name
     };
     request.status = "assigned";
+    request.assignedAt = Date.now();
 
     broadcastStockRequests();
   });

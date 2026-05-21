@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "vapid:generate": "node -e \"console.log(require('web-push').generateVAPIDKeys())\""
+    "vapid:generate": "node -e \"console.log(require('web-push').generateVAPIDKeys())\"",
+    "backup": "node scripts/backup-db.js",
+    "backup:sh": "bash scripts/backup-db.sh"
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",

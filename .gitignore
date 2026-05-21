@@ -4,6 +4,7 @@ build/
 .env
 .env.local
 bloomlink.db
+backups/
 npm-debug.log*
 yarn-error.log*
 .vscode/

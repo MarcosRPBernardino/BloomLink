@@ -108,6 +108,7 @@ const stockCategories = Object.keys(stockItemsByCategory);
 const socket = io(SERVER_URL);
 const SESSION_STORAGE_KEY = "bloomlinkSession";
 const ALERTS_STORAGE_KEY = "bloomlinkAlertsEnabled";
+let relativeTimestampTimerId = null;
 
 const state = {
   loggedInUser: null,
@@ -165,6 +166,8 @@ const elements = {
   enableAlertsButton: document.querySelector("#enableAlertsButton"),
   pushStatus: document.querySelector("#pushStatus"),
   enablePushButton: document.querySelector("#enablePushButton"),
+  iphoneHelpButton: document.querySelector("#iphoneHelpButton"),
+  iphoneHelpCard: document.querySelector("#iphoneHelpCard"),
   managerSettingsPanel: document.querySelector("#managerSettingsPanel"),
   autoEndEnabled: document.querySelector("#autoEndEnabled"),
   autoEndTime: document.querySelector("#autoEndTime"),
@@ -182,6 +185,7 @@ const elements = {
   adminError: document.querySelector("#adminError"),
   adminUsersList: document.querySelector("#adminUsersList"),
   usersList: document.querySelector("#usersList"),
+  teamCount: document.querySelector("#teamCount"),
   alertsList: document.querySelector("#alertsList"),
   requestsList: document.querySelector("#requestsList")
 };
@@ -217,6 +221,33 @@ function formatTime(timestamp) {
   });
 }
 
+function formatCompactAge(timestamp) {
+  if (!timestamp) {
+    return "";
+  }
+
+  const secondsAgo = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+
+  if (secondsAgo < 60) {
+    return "just now";
+  }
+
+  const minutesAgo = Math.floor(secondsAgo / 60);
+
+  if (minutesAgo < 60) {
+    return `${minutesAgo} min ago`;
+  }
+
+  const hoursAgo = Math.floor(minutesAgo / 60);
+
+  if (hoursAgo < 24) {
+    return `${hoursAgo} hr ago`;
+  }
+
+  const daysAgo = Math.floor(hoursAgo / 24);
+  return `${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`;
+}
+
 function formatLastSeen(timestamp) {
   if (!timestamp) {
     return "unknown";
@@ -247,6 +278,12 @@ function showScreen(screenName) {
   elements.loginScreen.classList.toggle("hidden", screenName !== "login");
   elements.shiftScreen.classList.toggle("hidden", screenName !== "shift");
   elements.appScreen.classList.toggle("hidden", screenName !== "app");
+
+  if (screenName === "app") {
+    startRelativeTimestampTimer();
+  } else {
+    stopRelativeTimestampTimer();
+  }
 }
 
 function showLoginError(message) {
@@ -608,6 +645,36 @@ function getRequestTitle(request) {
   return `${request.location} needs ${request.item}`;
 }
 
+function getTeamCountText(count) {
+  return `${count} active team member${count === 1 ? "" : "s"}`;
+}
+
+function refreshRelativeTimestamps() {
+  if (!state.currentUser || elements.appScreen.classList.contains("hidden")) {
+    return;
+  }
+
+  renderAlerts();
+  renderRequests();
+}
+
+function startRelativeTimestampTimer() {
+  if (relativeTimestampTimerId) {
+    return;
+  }
+
+  relativeTimestampTimerId = setInterval(refreshRelativeTimestamps, 30000);
+}
+
+function stopRelativeTimestampTimer() {
+  if (!relativeTimestampTimerId) {
+    return;
+  }
+
+  clearInterval(relativeTimestampTimerId);
+  relativeTimestampTimerId = null;
+}
+
 function canCurrentUserRenderStockAlerts() {
   if (!state.currentUser || state.currentUser.status === "on_break") {
     return false;
@@ -691,6 +758,7 @@ function switchTab(tabName) {
 
 function renderUsers() {
   elements.shiftControls.classList.toggle("hidden", !canControlShifts());
+  elements.teamCount.textContent = getTeamCountText(state.users.length);
 
   if (state.users.length === 0) {
     elements.usersList.className = "list empty";
@@ -795,7 +863,8 @@ function renderAlerts() {
       (request) => `
         <article class="row-card alert-card ${state.highlightedAlertIds.has(request.id) ? "alert-card-highlight" : ""}">
           <strong>${getRequestTitle(request)}</strong>
-          <span>Requested by ${request.requestedBy.name} at ${formatTime(request.createdAt)}</span>
+          <span>Requested by ${request.requestedBy.name}</span>
+          <span class="timestamp-text">Created ${formatCompactAge(request.createdAt)}</span>
           <div class="button-row">
             <button type="button" data-action="on_my_way" data-request-id="${request.id}" class="primary-button">On my way</button>
           </div>
@@ -819,13 +888,17 @@ function renderRequests() {
     .map((request) => {
       const assignedToCurrentUser =
         state.currentUser && request.assignedTo && request.assignedTo.id === state.currentUser.id;
-      const deliveredText = request.deliveredAt ? ` at ${formatTime(request.deliveredAt)}` : "";
-      const assignmentText =
-        request.status === "delivered"
-          ? `Delivered by ${request.assignedTo.name}${deliveredText}`
-          : request.assignedTo
-            ? `Assigned to ${request.assignedTo.name}`
-            : "Not assigned yet";
+      const assignedTimeText = request.assignedAt ? `Assigned ${formatCompactAge(request.assignedAt)}` : "";
+      const deliveredAtText = request.deliveredAt ? ` at ${formatTime(request.deliveredAt)}` : "";
+      let assignmentText = "Not assigned yet";
+
+      if (request.status === "delivered") {
+        assignmentText = request.assignedTo?.name
+          ? `Delivered by ${request.assignedTo.name}${deliveredAtText}`
+          : `Delivered${deliveredAtText}`;
+      } else if (request.assignedTo) {
+        assignmentText = `Assigned to ${request.assignedTo.name}`;
+      }
 
       return `
         <article class="row-card request-card">
@@ -833,8 +906,10 @@ function renderRequests() {
             <strong>${getRequestTitle(request)}</strong>
             <span class="status-label ${request.status}">${request.status}</span>
           </div>
-          <span>Requested by ${request.requestedBy.name} at ${formatTime(request.createdAt)}</span>
+          <span>Requested by ${request.requestedBy.name}</span>
+          <span class="timestamp-text">Created ${formatCompactAge(request.createdAt)}</span>
           <span>${assignmentText}</span>
+          ${request.status === "assigned" && assignedTimeText ? `<span class="timestamp-text">${assignedTimeText}</span>` : ""}
           ${canManageStockRequests() ? `<button type="button" data-delete-request-id="${request.id}">Delete Request</button>` : ""}
           ${assignedToCurrentUser && request.status !== "delivered" ? `<button type="button" data-deliver-id="${request.id}" class="primary-button">Delivered</button>` : ""}
         </article>
@@ -912,6 +987,10 @@ function clearCompletedRequests() {
   if (confirm("Clear all completed requests?")) {
     socket.emit("stock:clear_completed");
   }
+}
+
+function toggleIphoneHelp() {
+  elements.iphoneHelpCard.classList.toggle("hidden");
 }
 
 function endAllShifts() {
@@ -1288,6 +1367,7 @@ elements.endAllShiftsButton.addEventListener("click", endAllShifts);
 elements.saveSettingsButton.addEventListener("click", saveSettings);
 elements.enableAlertsButton.addEventListener("click", enableAlerts);
 elements.enablePushButton.addEventListener("click", enablePushNotifications);
+elements.iphoneHelpButton.addEventListener("click", toggleIphoneHelp);
 elements.requestCategory.addEventListener("change", handleRequestCategoryChange);
 elements.alertsList.addEventListener("click", handleListClick);
 elements.requestsList.addEventListener("click", handleListClick);

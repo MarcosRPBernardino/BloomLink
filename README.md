@@ -63,6 +63,35 @@ The file is created in the project root when the server starts. Online users and
 
 To reset seed users, stop the server, delete `bloomlink.db`, and start the server again.
 
+## Database backups
+
+Create a manual SQLite backup with:
+
+```bash
+npm run backup
+```
+
+The cross-platform npm script copies `bloomlink.db` into:
+
+```text
+backups/bloomlink-YYYY-MM-DD-HHMM.db
+```
+
+On Linux/VPS, the shell version is also available:
+
+```bash
+npm run backup:sh
+```
+
+Run a backup:
+
+- before Bloom
+- before big changes
+- after setting up users
+- before deleting a VPS
+
+The `backups/` folder is ignored by Git.
+
 ## Same-origin Socket.IO
 
 The frontend connects with:
