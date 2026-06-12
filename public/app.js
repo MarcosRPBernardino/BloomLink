@@ -1148,9 +1148,7 @@ socket.on("connect", () => {
   refreshPushStatus();
 });
 
-registerServiceWorker().catch(() => {
-  // Push setup still works later from the Enable Push Notifications button if supported.
-});
+registerServiceWorker().catch(() => {});
 
 socket.on("disconnect", () => {
   setConnectionStatus("Connection: Disconnected", false);

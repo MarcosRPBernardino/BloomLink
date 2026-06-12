@@ -31,7 +31,7 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// Registered users are persistent in SQLite. Active shift users stay in memory for this MVP.
+// Registered users are persistent in SQLite. Active shift state is process-local.
 // A shift remains active until explicit logout, even if the phone/browser socket disconnects.
 const activeShiftUsers = new Map();
 const pushSubscriptionsByUserId = new Map();
@@ -42,7 +42,7 @@ const settings = {
   lastAutoEndDate: null
 };
 
-// Stock requests are still in memory for this MVP phase; only registered users are persisted in Phase 2A.
+// Stock requests are process-local operational state and reset when the server restarts.
 const stockRequests = new Map();
 
 initializeDatabase();
@@ -1013,7 +1013,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // Assignment locking happens here: the first on_my_way wins, later claims are rejected.
+    // First On My Way wins. Subsequent assignments are rejected server-side.
     if (action === "on_my_way" && request.assignedTo) {
       socket.emit("stock:claim_failed", {
         requestId: request.id,

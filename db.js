@@ -257,7 +257,7 @@ function updateRegisteredUserPermissions(id, { manager, chef }) {
     chef: chef === true
   };
 
-  // Admin permission is intentionally not editable from the MVP UI. Marcos stays admin for now.
+  // Admin permission is intentionally not editable from the user-management UI.
   const roleConfig = getRoleConfig(nextPermissions);
 
   // Permission changes also rewrite role access so login/start shift stays backend-controlled.
