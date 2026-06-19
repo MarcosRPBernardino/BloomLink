@@ -9,6 +9,7 @@ try {
 const express = require("express");
 const http = require("http");
 const path = require("path");
+const crypto = require("crypto");
 const { Server } = require("socket.io");
 const webPush = require("web-push");
 const {
@@ -22,7 +23,16 @@ const {
   updateRegisteredUserPermissions,
   setRegisteredUserDisabled,
   resetRegisteredUserPin,
-  deleteRegisteredUser
+  deleteRegisteredUser,
+  listStockItems,
+  listStockCountLogsForExport,
+  updateStockItemQuantities,
+  cleanupOldStockCountLogs,
+  listActiveTemporaryStockPermissions,
+  getActiveTemporaryStockPermissionForUser,
+  grantTemporaryStockPermission,
+  revokeTemporaryStockPermission,
+  cleanupExpiredTemporaryStockPermissions
 } = require("./db");
 
 const app = express();
@@ -35,6 +45,7 @@ const PORT = process.env.PORT || 3000;
 // A shift remains active until explicit logout, even if the phone/browser socket disconnects.
 const activeShiftUsers = new Map();
 const pushSubscriptionsByUserId = new Map();
+const stockLogExportTokens = new Map();
 const endedShiftUserIds = new Set();
 const settings = {
   autoEndEnabled: false,
@@ -46,6 +57,16 @@ const settings = {
 const stockRequests = new Map();
 
 initializeDatabase();
+setInterval(cleanupOldStockCountLogs, 24 * 60 * 60 * 1000);
+setInterval(() => {
+  const expiredCount = cleanupExpiredTemporaryStockPermissions();
+
+  if (expiredCount > 0) {
+    console.log("temporary stock permissions expired", expiredCount);
+    refreshStockAccessForActiveUsers();
+    broadcastStockPermissionListToManagers();
+  }
+}, 60 * 1000);
 
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || "";
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || "";
@@ -66,6 +87,30 @@ app.get("/api/push/public-key", (req, res) => {
   });
 });
 
+app.get("/api/stock-count/logs.xlsx", (req, res) => {
+  const token = String(req.query.token || "");
+  const tokenRecord = stockLogExportTokens.get(token);
+  stockLogExportTokens.delete(token);
+
+  if (!tokenRecord || tokenRecord.expiresAt < Date.now()) {
+    res.status(403).send("Invalid or expired export token.");
+    return;
+  }
+
+  const user = activeShiftUsers.get(tokenRecord.userId);
+
+  if (!canManageStockRequests(user)) {
+    res.status(403).send("Manager or admin permission is required.");
+    return;
+  }
+
+  const workbook = buildStockCountLogsXlsx();
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${getStockLogExportFileName()}"`);
+  res.send(workbook);
+});
+
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -80,6 +125,7 @@ function getActiveShiftUsers() {
 
 function getPublicActiveShiftUser(user) {
   const pushRecord = pushSubscriptionsByUserId.get(user.id);
+  const temporaryStockPermission = getActiveTemporaryStockPermissionForUser(user.id);
 
   return {
     id: user.id,
@@ -99,6 +145,11 @@ function getPublicActiveShiftUser(user) {
       lastPushSentAt: pushRecord?.lastPushSentAt || null,
       lastPushError: pushRecord?.lastPushError || null
     },
+    stockCountAccess: {
+      allowed: canAccessStockCount(user, temporaryStockPermission),
+      temporary: Boolean(temporaryStockPermission),
+      expiresAt: temporaryStockPermission?.expiresAt || null
+    },
     online: user.connectionStatus === "connected"
   };
 }
@@ -115,6 +166,309 @@ function broadcastUsers() {
 
 function broadcastStockRequests() {
   io.emit("stock:update", getStockRequests());
+}
+
+function emitStockCountData(socket) {
+  socket.emit("stock_items:update", listStockItems());
+}
+
+function broadcastStockCountDataToStockUsers() {
+  const items = listStockItems();
+
+  for (const user of getActiveShiftUsers()) {
+    if (canAccessStockCount(user) && user.connectionStatus === "connected" && user.socketId) {
+      io.to(user.socketId).emit("stock_items:update", items);
+    }
+  }
+}
+
+function escapeXml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function formatExportDateTime(timestamp) {
+  if (!timestamp) {
+    return "";
+  }
+
+  const date = new Date(timestamp);
+
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function getExcelColumnName(index) {
+  let column = "";
+  let current = index;
+
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    column = String.fromCharCode(65 + remainder) + column;
+    current = Math.floor((current - 1) / 26);
+  }
+
+  return column;
+}
+
+function buildTextCell(rowIndex, columnIndex, value, styleId = 0) {
+  const cellRef = `${getExcelColumnName(columnIndex)}${rowIndex}`;
+  const styleAttribute = styleId ? ` s="${styleId}"` : "";
+
+  return `<c r="${cellRef}" t="inlineStr"${styleAttribute}><is><t>${escapeXml(value)}</t></is></c>`;
+}
+
+function buildNumberCell(rowIndex, columnIndex, value) {
+  const cellRef = `${getExcelColumnName(columnIndex)}${rowIndex}`;
+  const numberValue = Number(value) || 0;
+
+  return `<c r="${cellRef}"><v>${numberValue}</v></c>`;
+}
+
+function buildStockCountWorksheet() {
+  const headers = [
+    "Changed At",
+    "Changed By",
+    "Item",
+    "Previous Quantity",
+    "New Quantity",
+    "Reason"
+  ];
+  const rows = listStockCountLogsForExport().map((log) => [
+    formatExportDateTime(log.changedAt),
+    log.changedByName,
+    log.itemName,
+    log.previousQuantity,
+    log.newQuantity,
+    log.reason || ""
+  ]);
+  const allRows = [headers, ...rows];
+  const lastRow = Math.max(allRows.length, 1);
+  const lastColumn = getExcelColumnName(headers.length);
+  const rowXml = allRows
+    .map((row, rowIndex) => {
+      const excelRowIndex = rowIndex + 1;
+      const cells = row
+        .map((value, cellIndex) => {
+          const excelColumnIndex = cellIndex + 1;
+
+          if (rowIndex > 0 && (cellIndex === 3 || cellIndex === 4)) {
+            return buildNumberCell(excelRowIndex, excelColumnIndex, value);
+          }
+
+          return buildTextCell(excelRowIndex, excelColumnIndex, value, rowIndex === 0 ? 1 : 0);
+        })
+        .join("");
+
+      return `<row r="${excelRowIndex}">${cells}</row>`;
+    })
+    .join("");
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <dimension ref="A1:${lastColumn}${lastRow}"/>
+  <sheetViews>
+    <sheetView workbookViewId="0">
+      <pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>
+      <selection pane="bottomLeft"/>
+    </sheetView>
+  </sheetViews>
+  <cols>
+    <col min="1" max="1" width="20" customWidth="1"/>
+    <col min="2" max="2" width="18" customWidth="1"/>
+    <col min="3" max="3" width="34" customWidth="1"/>
+    <col min="4" max="5" width="18" customWidth="1"/>
+    <col min="6" max="6" width="24" customWidth="1"/>
+  </cols>
+  <sheetData>${rowXml}</sheetData>
+  <autoFilter ref="A1:${lastColumn}${lastRow}"/>
+</worksheet>`;
+}
+
+function buildStockCountLogsXlsx() {
+  const files = [
+    {
+      path: "[Content_Types].xml",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`
+    },
+    {
+      path: "_rels/.rels",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`
+    },
+    {
+      path: "xl/workbook.xml",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Stock History" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`
+    },
+    {
+      path: "xl/_rels/workbook.xml.rels",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`
+    },
+    {
+      path: "xl/styles.xml",
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2">
+    <font><sz val="11"/><name val="Calibri"/></font>
+    <font><b/><sz val="11"/><name val="Calibri"/></font>
+  </fonts>
+  <fills count="2">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+  </fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="2">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+  </cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+  <dxfs count="0"/>
+  <tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>
+</styleSheet>`
+    },
+    {
+      path: "xl/worksheets/sheet1.xml",
+      content: buildStockCountWorksheet()
+    }
+  ];
+
+  return buildZip(files);
+}
+
+function getStockLogExportFileName() {
+  const now = new Date();
+  const date = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0")
+  ].join("-");
+
+  return `stock-count-log-${date}.xlsx`;
+}
+
+function createCrc32Table() {
+  const table = [];
+
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    }
+
+    table[index] = value >>> 0;
+  }
+
+  return table;
+}
+
+const crc32Table = createCrc32Table();
+
+function calculateCrc32(buffer) {
+  let crc = 0xffffffff;
+
+  for (const byte of buffer) {
+    crc = crc32Table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function buildZip(files) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  for (const file of files) {
+    const nameBuffer = Buffer.from(file.path);
+    const dataBuffer = Buffer.from(file.content);
+    const crc = calculateCrc32(dataBuffer);
+    const localHeader = Buffer.alloc(30);
+
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(dataBuffer.length, 18);
+    localHeader.writeUInt32LE(dataBuffer.length, 22);
+    localHeader.writeUInt16LE(nameBuffer.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+
+    localParts.push(localHeader, nameBuffer, dataBuffer);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(dataBuffer.length, 20);
+    centralHeader.writeUInt32LE(dataBuffer.length, 24);
+    centralHeader.writeUInt16LE(nameBuffer.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+
+    centralParts.push(centralHeader, nameBuffer);
+    offset += localHeader.length + nameBuffer.length + dataBuffer.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const localDirectory = Buffer.concat(localParts);
+  const endRecord = Buffer.alloc(22);
+
+  endRecord.writeUInt32LE(0x06054b50, 0);
+  endRecord.writeUInt16LE(0, 4);
+  endRecord.writeUInt16LE(0, 6);
+  endRecord.writeUInt16LE(files.length, 8);
+  endRecord.writeUInt16LE(files.length, 10);
+  endRecord.writeUInt32LE(centralDirectory.length, 12);
+  endRecord.writeUInt32LE(localDirectory.length, 16);
+  endRecord.writeUInt16LE(0, 20);
+
+  return Buffer.concat([localDirectory, centralDirectory, endRecord]);
+}
+
+function createStockLogExportToken(user) {
+  const token = crypto.randomBytes(24).toString("hex");
+
+  stockLogExportTokens.set(token, {
+    userId: user.id,
+    expiresAt: Date.now() + 60 * 1000
+  });
+
+  return token;
 }
 
 function isEligibleStockRecipient(user) {
@@ -140,8 +494,52 @@ function canManageStockRequests(user) {
   );
 }
 
+function canAccessStockCount(user, existingTemporaryPermission = null) {
+  if (!user) {
+    return false;
+  }
+
+  return canManageStockRequests(user) || Boolean(existingTemporaryPermission || getActiveTemporaryStockPermissionForUser(user.id));
+}
+
 function canControlShifts(user) {
   return canManageStockRequests(user);
+}
+
+function getStockPermissionPayload() {
+  return {
+    permissions: listActiveTemporaryStockPermissions(),
+    users: listRegisteredUsers()
+      .filter((user) => !user.disabled)
+      .map((user) => ({
+        id: user.id,
+        name: user.name
+      }))
+  };
+}
+
+function emitStockPermissionList(socket) {
+  socket.emit("stock_permission:list", getStockPermissionPayload());
+}
+
+function broadcastStockPermissionListToManagers() {
+  const payload = getStockPermissionPayload();
+
+  for (const user of getActiveShiftUsers()) {
+    if (canManageStockRequests(user) && user.connectionStatus === "connected" && user.socketId) {
+      io.to(user.socketId).emit("stock_permission:list", payload);
+    }
+  }
+}
+
+function refreshStockAccessForActiveUsers() {
+  for (const user of getActiveShiftUsers()) {
+    if (user.connectionStatus === "connected" && user.socketId) {
+      io.to(user.socketId).emit("user:stock_access_update", getPublicActiveShiftUser(user));
+    }
+  }
+
+  broadcastUsers();
 }
 
 function createPushSubscriptionRecord(user, subscription) {
@@ -923,6 +1321,116 @@ io.on("connection", (socket) => {
 
     console.log("settings updated", getPublicSettings());
     io.emit("settings:update", getPublicSettings());
+  });
+
+  socket.on("stock_permission:list", () => {
+    const user = getActiveShiftUserForSocket(socket);
+
+    if (!canManageStockRequests(user)) {
+      socket.emit("stock_permission:error", {
+        message: "Manager or admin permission is required."
+      });
+      return;
+    }
+
+    emitStockPermissionList(socket);
+  });
+
+  socket.on("stock_permission:grant", (data) => {
+    const user = getActiveShiftUserForSocket(socket);
+
+    if (!canManageStockRequests(user)) {
+      socket.emit("stock_permission:error", {
+        message: "Manager or admin permission is required."
+      });
+      return;
+    }
+
+    try {
+      grantTemporaryStockPermission({
+        userId: data?.userId,
+        grantedByUser: user,
+        durationHours: data?.durationHours
+      });
+      broadcastStockPermissionListToManagers();
+      refreshStockAccessForActiveUsers();
+    } catch (error) {
+      socket.emit("stock_permission:error", {
+        message: error.message || "Could not grant stock access."
+      });
+    }
+  });
+
+  socket.on("stock_permission:revoke", (data) => {
+    const user = getActiveShiftUserForSocket(socket);
+
+    if (!canManageStockRequests(user)) {
+      socket.emit("stock_permission:error", {
+        message: "Manager or admin permission is required."
+      });
+      return;
+    }
+
+    try {
+      revokeTemporaryStockPermission(data?.permissionId);
+      broadcastStockPermissionListToManagers();
+      refreshStockAccessForActiveUsers();
+    } catch (error) {
+      socket.emit("stock_permission:error", {
+        message: error.message || "Could not revoke stock access."
+      });
+    }
+  });
+
+  socket.on("stock_items:get", () => {
+    const user = getActiveShiftUserForSocket(socket);
+
+    if (!canAccessStockCount(user)) {
+      socket.emit("stock_items:error", {
+        message: "Stock count access is required."
+      });
+      return;
+    }
+
+    emitStockCountData(socket);
+  });
+
+  socket.on("stock_items:update", (data) => {
+    const user = getActiveShiftUserForSocket(socket);
+
+    if (!canAccessStockCount(user)) {
+      socket.emit("stock_items:error", {
+        message: "Stock count access is required."
+      });
+      return;
+    }
+
+    try {
+      updateStockItemQuantities(data?.changes, user);
+      broadcastStockCountDataToStockUsers();
+    } catch (error) {
+      socket.emit("stock_items:error", {
+        message: error.message || "Could not update stock quantities."
+      });
+    }
+  });
+
+  socket.on("stock_logs:export_request", () => {
+    const user = getActiveShiftUserForSocket(socket);
+
+    if (!canManageStockRequests(user)) {
+      socket.emit("stock_items:error", {
+        message: "Manager or admin permission is required."
+      });
+      return;
+    }
+
+    const token = createStockLogExportToken(user);
+
+    socket.emit("stock_logs:export_ready", {
+      url: `/api/stock-count/logs.xlsx?token=${token}`,
+      fileName: getStockLogExportFileName()
+    });
   });
 
   socket.on("stock:create", (data) => {

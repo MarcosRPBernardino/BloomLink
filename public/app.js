@@ -109,6 +109,7 @@ const socket = io(SERVER_URL);
 const SESSION_STORAGE_KEY = "bloomlinkSession";
 const ALERTS_STORAGE_KEY = "bloomlinkAlertsEnabled";
 let relativeTimestampTimerId = null;
+let stockMessageTimerId = null;
 
 const state = {
   loggedInUser: null,
@@ -117,6 +118,12 @@ const state = {
   activeRequests: [],
   receivedAlerts: [],
   adminUsers: [],
+  stockItems: [],
+  stockDraftQuantities: {},
+  stockHasUnsavedChanges: false,
+  stockSavePending: false,
+  stockPermissionUsers: [],
+  stockPermissions: [],
   activeTab: "operations",
   alertsEnabled: false,
   audioContext: null,
@@ -137,8 +144,10 @@ const elements = {
   shiftScreen: document.querySelector("#shiftScreen"),
   appScreen: document.querySelector("#appScreen"),
   operationsTab: document.querySelector("#operationsTab"),
+  stockTab: document.querySelector("#stockTab"),
   adminTab: document.querySelector("#adminTab"),
   operationsView: document.querySelector("#operationsView"),
+  stockView: document.querySelector("#stockView"),
   adminView: document.querySelector("#adminView"),
   connectionStatus: document.querySelector("#connectionStatus"),
   loginForm: document.querySelector("#loginForm"),
@@ -184,6 +193,19 @@ const elements = {
   adminNewUserChef: document.querySelector("#adminNewUserChef"),
   adminError: document.querySelector("#adminError"),
   adminUsersList: document.querySelector("#adminUsersList"),
+  stockItemsList: document.querySelector("#stockItemsList"),
+  stockUnsavedIndicator: document.querySelector("#stockUnsavedIndicator"),
+  saveStockChangesButton: document.querySelector("#saveStockChangesButton"),
+  stockHistoryPanel: document.querySelector("#stockHistoryPanel"),
+  downloadStockLogsButton: document.querySelector("#downloadStockLogsButton"),
+  stockLastUpdated: document.querySelector("#stockLastUpdated"),
+  stockMessage: document.querySelector("#stockMessage"),
+  stockPermissionPanel: document.querySelector("#stockPermissionPanel"),
+  stockPermissionUser: document.querySelector("#stockPermissionUser"),
+  stockPermissionDuration: document.querySelector("#stockPermissionDuration"),
+  grantStockPermissionButton: document.querySelector("#grantStockPermissionButton"),
+  stockPermissionMessage: document.querySelector("#stockPermissionMessage"),
+  stockPermissionsList: document.querySelector("#stockPermissionsList"),
   usersList: document.querySelector("#usersList"),
   teamCount: document.querySelector("#teamCount"),
   alertsList: document.querySelector("#alertsList"),
@@ -219,6 +241,16 @@ function formatTime(timestamp) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function formatDateTime(timestamp) {
+  if (!timestamp) {
+    return "";
+  }
+
+  const date = new Date(timestamp);
+
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 function formatCompactAge(timestamp) {
@@ -316,6 +348,34 @@ function clearSettingsMessage() {
   elements.settingsMessage.classList.add("hidden");
 }
 
+function showStockMessage(message, type = "error", autoHide = false) {
+  if (stockMessageTimerId) {
+    clearTimeout(stockMessageTimerId);
+    stockMessageTimerId = null;
+  }
+
+  elements.stockMessage.textContent = message;
+  elements.stockMessage.classList.toggle("success-message", type === "success");
+  elements.stockMessage.classList.toggle("error-message", type !== "success");
+  elements.stockMessage.classList.remove("hidden");
+
+  if (autoHide) {
+    stockMessageTimerId = setTimeout(clearStockMessage, 3500);
+  }
+}
+
+function clearStockMessage() {
+  if (stockMessageTimerId) {
+    clearTimeout(stockMessageTimerId);
+    stockMessageTimerId = null;
+  }
+
+  elements.stockMessage.textContent = "";
+  elements.stockMessage.classList.remove("success-message");
+  elements.stockMessage.classList.add("error-message");
+  elements.stockMessage.classList.add("hidden");
+}
+
 function resetSessionState() {
   state.loggedInUser = null;
   state.currentUser = null;
@@ -323,6 +383,12 @@ function resetSessionState() {
   state.activeRequests = [];
   state.receivedAlerts = [];
   state.adminUsers = [];
+  state.stockItems = [];
+  state.stockDraftQuantities = {};
+  state.stockHasUnsavedChanges = false;
+  state.stockSavePending = false;
+  state.stockPermissionUsers = [];
+  state.stockPermissions = [];
   state.highlightedAlertIds.clear();
   state.activeTab = "operations";
 }
@@ -586,6 +652,22 @@ function requestBackendPushStatus() {
   }
 }
 
+function requestStockCountData() {
+  if (!canUseStockCount()) {
+    return;
+  }
+
+  socket.emit("stock_items:get");
+}
+
+function requestStockPermissionList() {
+  if (!canManageStockRequests()) {
+    return;
+  }
+
+  socket.emit("stock_permission:list");
+}
+
 function getNextAutoEndLabel(autoEndTime) {
   const [hours, minutes] = autoEndTime.split(":").map(Number);
   const now = new Date();
@@ -715,6 +797,14 @@ function canManageStockRequests() {
   );
 }
 
+function canUseStockCount() {
+  return canManageStockRequests() || state.currentUser?.stockCountAccess?.allowed === true;
+}
+
+function canViewStockHistory() {
+  return canManageStockRequests();
+}
+
 function canControlShifts() {
   return canManageStockRequests();
 }
@@ -735,15 +825,23 @@ function clearAdminError() {
 
 function renderTabs() {
   const canUseAdminTab = isCurrentUserAdmin();
+  const canUseStockTab = canUseStockCount();
 
   if (!canUseAdminTab && state.activeTab === "admin") {
     state.activeTab = "operations";
   }
 
+  if (!canUseStockTab && state.activeTab === "stock") {
+    state.activeTab = "operations";
+  }
+
+  elements.stockTab.classList.toggle("hidden", !canUseStockTab);
   elements.adminTab.classList.toggle("hidden", !canUseAdminTab);
   elements.operationsView.classList.toggle("hidden", state.activeTab !== "operations");
+  elements.stockView.classList.toggle("hidden", state.activeTab !== "stock" || !canUseStockTab);
   elements.adminView.classList.toggle("hidden", state.activeTab !== "admin" || !canUseAdminTab);
   elements.operationsTab.classList.toggle("active", state.activeTab === "operations");
+  elements.stockTab.classList.toggle("active", state.activeTab === "stock");
   elements.adminTab.classList.toggle("active", state.activeTab === "admin");
 }
 
@@ -752,8 +850,17 @@ function switchTab(tabName) {
     return;
   }
 
+  if (tabName === "stock" && !canUseStockCount()) {
+    return;
+  }
+
   state.activeTab = tabName;
   renderTabs();
+
+  if (tabName === "stock") {
+    requestStockCountData();
+    requestStockPermissionList();
+  }
 }
 
 function renderUsers() {
@@ -838,6 +945,171 @@ function renderAdminPanel() {
       `;
     })
     .join("");
+}
+
+function getStockDraftQuantity(item) {
+  return state.stockDraftQuantities[item.id] ?? item.currentQuantity;
+}
+
+function getChangedStockItems() {
+  return state.stockItems
+    .map((item) => ({
+      id: item.id,
+      currentQuantity: getStockDraftQuantity(item)
+    }))
+    .filter((change) => {
+      const originalItem = state.stockItems.find((item) => item.id === change.id);
+      return originalItem && originalItem.currentQuantity !== change.currentQuantity;
+    });
+}
+
+function updateStockUnsavedState() {
+  state.stockHasUnsavedChanges = getChangedStockItems().length > 0;
+  elements.stockUnsavedIndicator.classList.toggle("hidden", !state.stockHasUnsavedChanges);
+  elements.saveStockChangesButton.disabled = !state.stockHasUnsavedChanges || state.stockSavePending;
+}
+
+function setStockDraftQuantity(itemId, value, shouldRender = true) {
+  const nextQuantity = Math.max(0, Math.floor(Number(value) || 0));
+  state.stockDraftQuantities[itemId] = nextQuantity;
+  updateStockUnsavedState();
+
+  if (shouldRender) {
+    renderStockItems();
+  }
+}
+
+function renderStockItems() {
+  updateStockUnsavedState();
+  renderStockLastUpdated();
+
+  if (!canUseStockCount()) {
+    elements.stockItemsList.className = "list empty";
+    elements.stockItemsList.textContent = "Stock count access is required.";
+    return;
+  }
+
+  if (state.stockItems.length === 0) {
+    elements.stockItemsList.className = "list empty";
+    elements.stockItemsList.textContent = "Stock items not loaded yet.";
+    return;
+  }
+
+  const itemsByCategory = new Map();
+
+  for (const item of state.stockItems) {
+    if (!itemsByCategory.has(item.category)) {
+      itemsByCategory.set(item.category, []);
+    }
+
+    itemsByCategory.get(item.category).push(item);
+  }
+
+  elements.stockItemsList.className = "stock-category-list";
+  elements.stockItemsList.innerHTML = stockCategories
+    .filter((category) => itemsByCategory.has(category))
+    .map((category) => {
+      const items = itemsByCategory.get(category);
+
+      return `
+        <section class="stock-category">
+          <h3>${category}</h3>
+          <div class="stock-item-list">
+            ${items
+              .map((item) => {
+                const draftQuantity = getStockDraftQuantity(item);
+
+                return `
+                  <article class="stock-item-row">
+                    <span>${item.name}</span>
+                    <div class="stock-quantity-control">
+                      <button type="button" data-stock-action="decrement" data-stock-item-id="${item.id}" aria-label="Decrease ${item.name}">-</button>
+                      <input type="number" min="0" step="1" inputmode="numeric" value="${draftQuantity}" data-stock-input-id="${item.id}" aria-label="${item.name} quantity">
+                      <button type="button" data-stock-action="increment" data-stock-item-id="${item.id}" aria-label="Increase ${item.name}">+</button>
+                    </div>
+                  </article>
+                `;
+              })
+              .join("")}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+}
+
+function renderStockLastUpdated() {
+  const latestTimestamp = state.stockItems
+    .map((item) => item.updatedAt)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+
+  elements.stockLastUpdated.textContent = latestTimestamp
+    ? `Last updated: ${formatDateTime(latestTimestamp)}`
+    : "Last updated: Not updated yet";
+}
+
+function showStockPermissionMessage(message) {
+  elements.stockPermissionMessage.textContent = message;
+  elements.stockPermissionMessage.classList.remove("hidden");
+}
+
+function clearStockPermissionMessage() {
+  elements.stockPermissionMessage.textContent = "";
+  elements.stockPermissionMessage.classList.add("hidden");
+}
+
+function renderStockPermissionPanel() {
+  const canManagePermissions = canManageStockRequests();
+  elements.stockPermissionPanel.classList.toggle("hidden", !canManagePermissions);
+
+  if (!canManagePermissions) {
+    return;
+  }
+
+  const currentSelectedUserId = elements.stockPermissionUser.value;
+  elements.stockPermissionUser.innerHTML = state.stockPermissionUsers
+    .map((user) => `<option value="${user.id}">${user.name}</option>`)
+    .join("");
+
+  if (currentSelectedUserId) {
+    elements.stockPermissionUser.value = currentSelectedUserId;
+  }
+
+  elements.grantStockPermissionButton.disabled = state.stockPermissionUsers.length === 0;
+
+  if (state.stockPermissions.length === 0) {
+    elements.stockPermissionsList.className = "list empty";
+    elements.stockPermissionsList.textContent = "No temporary stock permissions active.";
+    return;
+  }
+
+  elements.stockPermissionsList.className = "list";
+  elements.stockPermissionsList.innerHTML = state.stockPermissions
+    .map(
+      (permission) => `
+        <article class="row-card stock-permission-card">
+          <div class="request-header">
+            <strong>${permission.userName}</strong>
+            <span class="status-label online">Temporary access</span>
+          </div>
+          <span>Expires at ${formatTime(permission.expiresAt)}</span>
+          <span>Granted by ${permission.grantedByName}</span>
+          <button type="button" data-stock-permission-action="revoke" data-permission-id="${permission.id}">Revoke</button>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function renderStockHistoryPanel() {
+  elements.stockHistoryPanel.classList.toggle("hidden", !canViewStockHistory());
+}
+
+function renderStockTab() {
+  renderStockItems();
+  renderStockHistoryPanel();
+  renderStockPermissionPanel();
 }
 
 function renderAlerts() {
@@ -925,6 +1197,7 @@ function renderAll() {
   renderUsers();
   renderAlerts();
   renderRequests();
+  renderStockTab();
   renderAdminPanel();
 
   if (state.currentUser) {
@@ -969,6 +1242,54 @@ function createStockRequest(event) {
   socket.emit("stock:create", {
     location: elements.requestLocation.value,
     item: elements.requestItem.value
+  });
+}
+
+function saveStockChanges() {
+  const changes = getChangedStockItems();
+
+  if (changes.length === 0) {
+    return;
+  }
+
+  clearStockMessage();
+  state.stockSavePending = true;
+  updateStockUnsavedState();
+  socket.emit("stock_items:update", {
+    changes
+  });
+}
+
+function downloadStockLogsXlsx() {
+  if (!canViewStockHistory()) {
+    return;
+  }
+
+  clearStockMessage();
+  socket.emit("stock_logs:export_request");
+}
+
+function grantStockPermission() {
+  if (!canManageStockRequests()) {
+    return;
+  }
+
+  clearStockPermissionMessage();
+  socket.emit("stock_permission:grant", {
+    userId: elements.stockPermissionUser.value,
+    durationHours: Number(elements.stockPermissionDuration.value)
+  });
+}
+
+function handleStockPermissionClick(event) {
+  const button = event.target.closest("[data-stock-permission-action]");
+
+  if (!button || button.dataset.stockPermissionAction !== "revoke") {
+    return;
+  }
+
+  socket.emit("stock_permission:revoke", {
+    permissionId: button.dataset.permissionId
   });
 }
 
@@ -1064,6 +1385,39 @@ function handleListClick(event) {
     }
     return;
   }
+}
+
+function handleStockClick(event) {
+  const button = event.target.closest("[data-stock-action]");
+
+  if (!button) {
+    return;
+  }
+
+  const itemId = button.dataset.stockItemId;
+  const item = state.stockItems.find((stockItem) => stockItem.id === itemId);
+
+  if (!item) {
+    return;
+  }
+
+  const currentDraft = getStockDraftQuantity(item);
+  const nextQuantity =
+    button.dataset.stockAction === "increment"
+      ? currentDraft + 1
+      : currentDraft - 1;
+
+  setStockDraftQuantity(itemId, nextQuantity);
+}
+
+function handleStockInput(event) {
+  const input = event.target.closest("[data-stock-input-id]");
+
+  if (!input) {
+    return;
+  }
+
+  setStockDraftQuantity(input.dataset.stockInputId, input.value, false);
 }
 
 function handleAdminClick(event) {
@@ -1188,6 +1542,8 @@ socket.on("user:session_started", (user) => {
   if (canControlShifts()) {
     socket.emit("settings:get");
   }
+  requestStockPermissionList();
+  requestStockCountData();
   saveSession();
   refreshPushStatus();
   requestBackendPushStatus();
@@ -1207,6 +1563,8 @@ socket.on("user:restore_success", (data) => {
   if (canControlShifts()) {
     socket.emit("settings:get");
   }
+  requestStockPermissionList();
+  requestStockCountData();
   saveSession();
   refreshPushStatus();
   requestBackendPushStatus();
@@ -1320,6 +1678,82 @@ socket.on("settings:error", (data) => {
   showSettingsMessage(data.message || "Settings action failed.");
 });
 
+socket.on("stock_items:update", (items) => {
+  const wasSaving = state.stockSavePending;
+  state.stockItems = items;
+  state.stockDraftQuantities = Object.fromEntries(
+    items.map((item) => [item.id, item.currentQuantity])
+  );
+  state.stockHasUnsavedChanges = false;
+  state.stockSavePending = false;
+
+  if (wasSaving) {
+    showStockMessage("Stock changes saved.", "success", true);
+  } else {
+    clearStockMessage();
+  }
+
+  renderStockTab();
+});
+
+socket.on("stock_items:error", (data) => {
+  const message = state.stockSavePending
+    ? "Could not save stock changes."
+    : data.message || "Stock count action failed.";
+
+  state.stockSavePending = false;
+  updateStockUnsavedState();
+  showStockMessage(message);
+});
+
+socket.on("stock_logs:export_ready", async (data) => {
+  try {
+    const response = await fetch(data.url);
+
+    if (!response.ok) {
+      throw new Error("XLSX export failed.");
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = data.fileName || "stock-count-log.xlsx";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch (error) {
+    showStockMessage("Could not download stock history.");
+  }
+});
+
+socket.on("stock_permission:list", (data) => {
+  state.stockPermissionUsers = data.users || [];
+  state.stockPermissions = data.permissions || [];
+  clearStockPermissionMessage();
+  renderStockPermissionPanel();
+});
+
+socket.on("stock_permission:error", (data) => {
+  showStockPermissionMessage(data.message || "Stock permission action failed.");
+});
+
+socket.on("user:stock_access_update", (user) => {
+  state.currentUser = user;
+
+  if (!canUseStockCount() && state.activeTab === "stock") {
+    state.activeTab = "operations";
+  }
+
+  if (canUseStockCount()) {
+    requestStockCountData();
+  }
+
+  requestStockPermissionList();
+  renderAll();
+});
+
 socket.on("admin:users:list", (users) => {
   state.adminUsers = users;
   clearAdminError();
@@ -1367,10 +1801,17 @@ elements.enableAlertsButton.addEventListener("click", enableAlerts);
 elements.enablePushButton.addEventListener("click", enablePushNotifications);
 elements.iphoneHelpButton.addEventListener("click", toggleIphoneHelp);
 elements.requestCategory.addEventListener("change", handleRequestCategoryChange);
+elements.saveStockChangesButton.addEventListener("click", saveStockChanges);
+elements.downloadStockLogsButton.addEventListener("click", downloadStockLogsXlsx);
+elements.grantStockPermissionButton.addEventListener("click", grantStockPermission);
+elements.stockItemsList.addEventListener("click", handleStockClick);
+elements.stockItemsList.addEventListener("input", handleStockInput);
+elements.stockPermissionsList.addEventListener("click", handleStockPermissionClick);
 elements.alertsList.addEventListener("click", handleListClick);
 elements.requestsList.addEventListener("click", handleListClick);
 elements.usersList.addEventListener("click", handleListClick);
 elements.adminCreateUserButton.addEventListener("click", createAdminUser);
 elements.adminUsersList.addEventListener("click", handleAdminClick);
 elements.operationsTab.addEventListener("click", () => switchTab("operations"));
+elements.stockTab.addEventListener("click", () => switchTab("stock"));
 elements.adminTab.addEventListener("click", () => switchTab("admin"));

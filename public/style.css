@@ -144,7 +144,7 @@ button:active {
   left: 12px;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
   gap: 8px;
   max-width: 420px;
   margin: 0 auto;
@@ -199,6 +199,12 @@ button:active {
   font-weight: 750;
 }
 
+.success-message {
+  margin: 0;
+  color: var(--green-dark);
+  font-weight: 750;
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -244,6 +250,18 @@ button:active {
 
 .settings-panel {
   order: 6;
+}
+
+.stock-count-panel {
+  order: 1;
+}
+
+.stock-history-panel {
+  order: 2;
+}
+
+.stock-permission-panel {
+  order: 3;
 }
 
 .form-grid {
@@ -407,6 +425,68 @@ button:focus-visible {
   gap: 8px;
 }
 
+.stock-category-list {
+  display: grid;
+  gap: 12px;
+}
+
+.stock-category {
+  display: grid;
+  gap: 7px;
+}
+
+.stock-category h3 {
+  margin: 0;
+  color: var(--green-dark);
+  font-size: 14px;
+}
+
+.stock-item-list {
+  display: grid;
+  gap: 7px;
+}
+
+.stock-item-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+  background: var(--surface);
+}
+
+.stock-item-row span {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stock-quantity-control {
+  display: grid;
+  grid-template-columns: 38px 64px 38px;
+  align-items: center;
+  gap: 5px;
+}
+
+.stock-quantity-control button {
+  min-height: 38px;
+  padding: 6px;
+}
+
+.stock-quantity-control input {
+  min-height: 38px;
+  padding: 6px;
+  text-align: center;
+}
+
+.stock-save-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .shift-controls {
   display: flex;
   align-items: center;
@@ -440,6 +520,10 @@ button:focus-visible {
   line-height: 1.1;
   text-transform: capitalize;
   letter-spacing: 0;
+}
+
+.status-label.hidden {
+  display: none;
 }
 
 .online,

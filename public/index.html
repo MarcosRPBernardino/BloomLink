@@ -60,6 +60,7 @@
 
       <nav class="tab-bar">
         <button id="operationsTab" type="button" class="tab-button active" data-tab="operations">Operations</button>
+        <button id="stockTab" type="button" class="tab-button hidden" data-tab="stock">Stock</button>
         <button id="adminTab" type="button" class="tab-button hidden" data-tab="admin">Admin</button>
       </nav>
 
@@ -156,6 +157,58 @@
             </div>
           </div>
           <div id="usersList" class="list empty">No users online.</div>
+        </section>
+      </div>
+
+      <div id="stockView" class="app-layout hidden">
+        <section class="panel wide stock-count-panel">
+          <div class="request-header">
+            <h2>Stock Count</h2>
+            <span id="stockUnsavedIndicator" class="status-label pending hidden">Unsaved changes</span>
+          </div>
+          <div id="stockItemsList" class="list empty">Stock items not loaded yet.</div>
+          <div class="stock-save-row">
+            <button id="saveStockChangesButton" type="button" class="primary-button">Save Changes</button>
+          </div>
+          <p id="stockLastUpdated" class="section-subtitle">Last updated: Not updated yet</p>
+          <p id="stockMessage" class="error-message hidden"></p>
+        </section>
+
+        <section id="stockHistoryPanel" class="panel wide stock-history-panel">
+          <div class="request-header">
+            <div>
+              <h2>Stock History</h2>
+              <p class="section-subtitle">Download the stock count audit log.</p>
+            </div>
+            <button id="downloadStockLogsButton" type="button" class="secondary-button">Download XLSX</button>
+          </div>
+        </section>
+
+        <section id="stockPermissionPanel" class="panel wide stock-permission-panel hidden">
+          <div class="request-header">
+            <div>
+              <h2>Stock Access Permissions</h2>
+              <p class="section-subtitle">Temporarily allow a team member to use Stock Count.</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label>
+              User
+              <select id="stockPermissionUser"></select>
+            </label>
+            <label>
+              Duration
+              <select id="stockPermissionDuration">
+                <option value="1">1 hour</option>
+                <option value="2">2 hours</option>
+                <option value="4">4 hours</option>
+                <option value="8">8 hours</option>
+              </select>
+            </label>
+            <button id="grantStockPermissionButton" type="button" class="primary-button">Grant Access</button>
+          </div>
+          <p id="stockPermissionMessage" class="error-message hidden"></p>
+          <div id="stockPermissionsList" class="list empty">No temporary stock permissions active.</div>
         </section>
       </div>
 
