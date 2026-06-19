@@ -27,6 +27,7 @@ const {
   listStockItems,
   listStockCountLogsForExport,
   updateStockItemQuantities,
+  deductStockItemForDelivery,
   cleanupOldStockCountLogs,
   listActiveTemporaryStockPermissions,
   getActiveTemporaryStockPermissionForUser,
@@ -1551,6 +1552,7 @@ io.on("connection", (socket) => {
   socket.on("stock:delivered", (data) => {
     const user = getActiveShiftUserForSocket(socket);
     const request = stockRequests.get(data?.requestId);
+    const takenFromContainer = data?.takenFromContainer === true;
 
     if (!user || !request || request.status === "delivered") {
       return;
@@ -1563,6 +1565,14 @@ io.on("connection", (socket) => {
 
     request.status = "delivered";
     request.deliveredAt = Date.now();
+
+    if (takenFromContainer) {
+      const deduction = deductStockItemForDelivery(request.item, user);
+
+      if (deduction) {
+        broadcastStockCountDataToStockUsers();
+      }
+    }
 
     broadcastStockRequests();
   });

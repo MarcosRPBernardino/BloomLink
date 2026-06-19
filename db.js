@@ -462,6 +462,68 @@ function updateStockItemQuantities(changes, changedByUser) {
   };
 }
 
+function deductStockItemForDelivery(itemName, changedByUser) {
+  const normalizedItemName = String(itemName || "").trim();
+
+  if (!normalizedItemName) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const getItem = db.prepare("SELECT * FROM stock_items WHERE name = ? COLLATE NOCASE LIMIT 1");
+  const updateItem = db.prepare(`
+    UPDATE stock_items
+    SET current_quantity = ?,
+        updated_at = ?
+    WHERE id = ?
+  `);
+  const insertLog = db.prepare(`
+    INSERT INTO stock_count_logs (
+      id,
+      item_id,
+      item_name,
+      previous_quantity,
+      new_quantity,
+      changed_by_user_id,
+      changed_by_name,
+      changed_at,
+      reason
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const deductItem = db.transaction(() => {
+    const existingItem = getItem.get(normalizedItemName);
+
+    if (!existingItem) {
+      return null;
+    }
+
+    const nextQuantity = Math.max(0, existingItem.current_quantity - 1);
+
+    updateItem.run(nextQuantity, now, existingItem.id);
+    insertLog.run(
+      `stock_log_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      existingItem.id,
+      existingItem.name,
+      existingItem.current_quantity,
+      nextQuantity,
+      changedByUser.id,
+      changedByUser.name,
+      now,
+      "Delivered from container"
+    );
+
+    return {
+      itemId: existingItem.id,
+      previousQuantity: existingItem.current_quantity,
+      newQuantity: nextQuantity
+    };
+  });
+
+  return deductItem();
+}
+
 function cleanupOldStockCountLogs() {
   const cutoff = new Date();
   cutoff.setMonth(cutoff.getMonth() - 3);
@@ -736,6 +798,7 @@ module.exports = {
   listStockItems,
   listStockCountLogsForExport,
   updateStockItemQuantities,
+  deductStockItemForDelivery,
   cleanupOldStockCountLogs,
   listActiveTemporaryStockPermissions,
   getActiveTemporaryStockPermissionForUser,

@@ -553,6 +553,45 @@ button:focus-visible {
   color: #455761;
 }
 
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(32, 41, 35, 0.28);
+}
+
+.dialog-backdrop.hidden {
+  display: none;
+}
+
+.dialog-card {
+  width: min(100%, 360px);
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.dialog-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.dialog-card p {
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+
+.dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 @keyframes alertPulse {
   0% {
     background: #fffaf0;

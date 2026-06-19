@@ -124,6 +124,7 @@ const state = {
   stockSavePending: false,
   stockPermissionUsers: [],
   stockPermissions: [],
+  pendingDeliveryRequestId: null,
   activeTab: "operations",
   alertsEnabled: false,
   audioContext: null,
@@ -206,6 +207,9 @@ const elements = {
   grantStockPermissionButton: document.querySelector("#grantStockPermissionButton"),
   stockPermissionMessage: document.querySelector("#stockPermissionMessage"),
   stockPermissionsList: document.querySelector("#stockPermissionsList"),
+  containerStockDialog: document.querySelector("#containerStockDialog"),
+  containerStockYesButton: document.querySelector("#containerStockYesButton"),
+  containerStockNoButton: document.querySelector("#containerStockNoButton"),
   usersList: document.querySelector("#usersList"),
   teamCount: document.querySelector("#teamCount"),
   alertsList: document.querySelector("#alertsList"),
@@ -389,6 +393,7 @@ function resetSessionState() {
   state.stockSavePending = false;
   state.stockPermissionUsers = [];
   state.stockPermissions = [];
+  state.pendingDeliveryRequestId = null;
   state.highlightedAlertIds.clear();
   state.activeTab = "operations";
 }
@@ -1245,6 +1250,30 @@ function createStockRequest(event) {
   });
 }
 
+function openContainerStockDialog(requestId) {
+  state.pendingDeliveryRequestId = requestId;
+  elements.containerStockDialog.classList.remove("hidden");
+  elements.containerStockYesButton.focus();
+}
+
+function closeContainerStockDialog() {
+  state.pendingDeliveryRequestId = null;
+  elements.containerStockDialog.classList.add("hidden");
+}
+
+function confirmStockDelivery(takenFromContainer) {
+  if (!state.pendingDeliveryRequestId) {
+    closeContainerStockDialog();
+    return;
+  }
+
+  socket.emit("stock:delivered", {
+    requestId: state.pendingDeliveryRequestId,
+    takenFromContainer
+  });
+  closeContainerStockDialog();
+}
+
 function saveStockChanges() {
   const changes = getChangedStockItems();
 
@@ -1368,9 +1397,7 @@ function handleListClick(event) {
   if (deliverButton) {
     event.preventDefault();
     console.log("Delivered tapped");
-    socket.emit("stock:delivered", {
-      requestId: deliverButton.dataset.deliverId
-    });
+    openContainerStockDialog(deliverButton.dataset.deliverId);
     return;
   }
 
@@ -1804,6 +1831,8 @@ elements.requestCategory.addEventListener("change", handleRequestCategoryChange)
 elements.saveStockChangesButton.addEventListener("click", saveStockChanges);
 elements.downloadStockLogsButton.addEventListener("click", downloadStockLogsXlsx);
 elements.grantStockPermissionButton.addEventListener("click", grantStockPermission);
+elements.containerStockYesButton.addEventListener("click", () => confirmStockDelivery(true));
+elements.containerStockNoButton.addEventListener("click", () => confirmStockDelivery(false));
 elements.stockItemsList.addEventListener("click", handleStockClick);
 elements.stockItemsList.addEventListener("input", handleStockInput);
 elements.stockPermissionsList.addEventListener("click", handleStockPermissionClick);

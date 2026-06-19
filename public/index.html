@@ -247,6 +247,17 @@
     </section>
   </main>
 
+  <div id="containerStockDialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="containerStockTitle">
+    <div class="dialog-card">
+      <h2 id="containerStockTitle">Container Stock</h2>
+      <p>Have you taken this item from the container?</p>
+      <div class="dialog-actions">
+        <button id="containerStockNoButton" type="button" class="secondary-button">No</button>
+        <button id="containerStockYesButton" type="button" class="primary-button">Yes</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="app.js"></script>
 </body>
