@@ -499,6 +499,7 @@ function deductStockItemForDelivery(itemName, changedByUser) {
       return null;
     }
 
+    console.log("stock item matched", existingItem.name);
     const nextQuantity = Math.max(0, existingItem.current_quantity - 1);
 
     updateItem.run(nextQuantity, now, existingItem.id);
@@ -514,8 +515,15 @@ function deductStockItemForDelivery(itemName, changedByUser) {
       "Delivered from container"
     );
 
+    if (nextQuantity < existingItem.current_quantity) {
+      console.log("stock decremented", existingItem.name, existingItem.current_quantity, nextQuantity);
+    } else {
+      console.log("stock not decremented", "quantity already 0");
+    }
+
     return {
       itemId: existingItem.id,
+      itemName: existingItem.name,
       previousQuantity: existingItem.current_quantity,
       newQuantity: nextQuantity
     };

@@ -1250,7 +1250,39 @@ function createStockRequest(event) {
   });
 }
 
+function ensureContainerStockDialog() {
+  if (elements.containerStockDialog) {
+    return;
+  }
+
+  const dialog = document.createElement("div");
+  dialog.id = "containerStockDialog";
+  dialog.className = "dialog-backdrop hidden";
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-labelledby", "containerStockTitle");
+  dialog.innerHTML = `
+    <div class="dialog-card">
+      <h2 id="containerStockTitle">Container Stock</h2>
+      <p>Have you taken this item from the container?</p>
+      <div class="dialog-actions">
+        <button id="containerStockNoButton" type="button" class="secondary-button">No</button>
+        <button id="containerStockYesButton" type="button" class="primary-button">Yes</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+
+  elements.containerStockDialog = dialog;
+  elements.containerStockYesButton = dialog.querySelector("#containerStockYesButton");
+  elements.containerStockNoButton = dialog.querySelector("#containerStockNoButton");
+  elements.containerStockYesButton.addEventListener("click", () => confirmStockDelivery(true));
+  elements.containerStockNoButton.addEventListener("click", () => confirmStockDelivery(false));
+}
+
 function openContainerStockDialog(requestId) {
+  ensureContainerStockDialog();
+  console.log("Delivered clicked, opening container confirmation", requestId);
   state.pendingDeliveryRequestId = requestId;
   elements.containerStockDialog.classList.remove("hidden");
   elements.containerStockYesButton.focus();
@@ -1267,6 +1299,7 @@ function confirmStockDelivery(takenFromContainer) {
     return;
   }
 
+  console.log("Container confirmation answer", state.pendingDeliveryRequestId, takenFromContainer);
   socket.emit("stock:delivered", {
     requestId: state.pendingDeliveryRequestId,
     takenFromContainer
@@ -1396,7 +1429,6 @@ function handleListClick(event) {
 
   if (deliverButton) {
     event.preventDefault();
-    console.log("Delivered tapped");
     openContainerStockDialog(deliverButton.dataset.deliverId);
     return;
   }
@@ -1831,8 +1863,10 @@ elements.requestCategory.addEventListener("change", handleRequestCategoryChange)
 elements.saveStockChangesButton.addEventListener("click", saveStockChanges);
 elements.downloadStockLogsButton.addEventListener("click", downloadStockLogsXlsx);
 elements.grantStockPermissionButton.addEventListener("click", grantStockPermission);
-elements.containerStockYesButton.addEventListener("click", () => confirmStockDelivery(true));
-elements.containerStockNoButton.addEventListener("click", () => confirmStockDelivery(false));
+if (elements.containerStockYesButton && elements.containerStockNoButton) {
+  elements.containerStockYesButton.addEventListener("click", () => confirmStockDelivery(true));
+  elements.containerStockNoButton.addEventListener("click", () => confirmStockDelivery(false));
+}
 elements.stockItemsList.addEventListener("click", handleStockClick);
 elements.stockItemsList.addEventListener("input", handleStockInput);
 elements.stockPermissionsList.addEventListener("click", handleStockPermissionClick);

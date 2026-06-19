@@ -1551,8 +1551,17 @@ io.on("connection", (socket) => {
 
   socket.on("stock:delivered", (data) => {
     const user = getActiveShiftUserForSocket(socket);
-    const request = stockRequests.get(data?.requestId);
+    const requestId = String(data?.requestId || "").trim();
+    const request = stockRequests.get(requestId);
     const takenFromContainer = data?.takenFromContainer === true;
+    const hasContainerAnswer = typeof data?.takenFromContainer === "boolean";
+
+    console.log("stock delivered with container answer", requestId, data?.takenFromContainer);
+
+    if (!hasContainerAnswer) {
+      console.log("stock not decremented", "missing container answer");
+      return;
+    }
 
     if (!user || !request || request.status === "delivered") {
       return;
@@ -1571,7 +1580,11 @@ io.on("connection", (socket) => {
 
       if (deduction) {
         broadcastStockCountDataToStockUsers();
+      } else {
+        console.log("stock not decremented", "stock item not found");
       }
+    } else {
+      console.log("stock not decremented", "user selected no");
     }
 
     broadcastStockRequests();
