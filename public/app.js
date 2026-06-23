@@ -32,7 +32,9 @@ const stockItemsByCategory = {
     "Large Takeaway Bag",
     "Small Takeaway Bag",
     "Front Film Paper Bag",
-    "Cling Film"
+    "Cling Film",
+    "2 Cup Tray Holder",
+    "4 Cup Tray Holder"
   ],
   "Service & Counter": [
     "Napkins",
@@ -43,7 +45,8 @@ const stockItemsByCategory = {
     "Wooden Fork",
     "Wooden Spoon",
     "Till Roll",
-    "Handheld Card Machine Roll"
+    "Handheld Card Machine Roll",
+    "Straw (Red)"
   ],
   "Cleaning & Waste": [
     "50L Bin Bags (Black)",
