@@ -465,8 +465,9 @@ function updateStockItemQuantities(changes, changedByUser) {
   };
 }
 
-function deductStockItemForDelivery(itemName, changedByUser) {
+function deductStockItemForDelivery(itemName, changedByUser, quantity = 1) {
   const normalizedItemName = String(itemName || "").trim();
+  const deductionQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
 
   if (!normalizedItemName) {
     return null;
@@ -503,7 +504,7 @@ function deductStockItemForDelivery(itemName, changedByUser) {
     }
 
     console.log("stock item matched", existingItem.name);
-    const nextQuantity = Math.max(0, existingItem.current_quantity - 1);
+    const nextQuantity = Math.max(0, existingItem.current_quantity - deductionQuantity);
 
     updateItem.run(nextQuantity, now, existingItem.id);
     insertLog.run(
@@ -515,7 +516,7 @@ function deductStockItemForDelivery(itemName, changedByUser) {
       changedByUser.id,
       changedByUser.name,
       now,
-      "Delivered from container"
+      `Delivered from container (${deductionQuantity} ${deductionQuantity === 1 ? "unit" : "units"})`
     );
 
     if (nextQuantity < existingItem.current_quantity) {
@@ -528,7 +529,8 @@ function deductStockItemForDelivery(itemName, changedByUser) {
       itemId: existingItem.id,
       itemName: existingItem.name,
       previousQuantity: existingItem.current_quantity,
-      newQuantity: nextQuantity
+      newQuantity: nextQuantity,
+      deductionQuantity
     };
   });
 

@@ -128,6 +128,7 @@ const state = {
   stockPermissionUsers: [],
   stockPermissions: [],
   pendingDeliveryRequestId: null,
+  pendingContainerQuantity: 1,
   activeTab: "operations",
   alertsEnabled: false,
   audioContext: null,
@@ -213,6 +214,12 @@ const elements = {
   containerStockDialog: document.querySelector("#containerStockDialog"),
   containerStockYesButton: document.querySelector("#containerStockYesButton"),
   containerStockNoButton: document.querySelector("#containerStockNoButton"),
+  containerQuantityDialog: document.querySelector("#containerQuantityDialog"),
+  containerQuantityMinusButton: document.querySelector("#containerQuantityMinusButton"),
+  containerQuantityPlusButton: document.querySelector("#containerQuantityPlusButton"),
+  containerQuantityInput: document.querySelector("#containerQuantityInput"),
+  containerQuantityCancelButton: document.querySelector("#containerQuantityCancelButton"),
+  containerQuantityConfirmButton: document.querySelector("#containerQuantityConfirmButton"),
   usersList: document.querySelector("#usersList"),
   teamCount: document.querySelector("#teamCount"),
   alertsList: document.querySelector("#alertsList"),
@@ -397,6 +404,7 @@ function resetSessionState() {
   state.stockPermissionUsers = [];
   state.stockPermissions = [];
   state.pendingDeliveryRequestId = null;
+  state.pendingContainerQuantity = 1;
   state.highlightedAlertIds.clear();
   state.activeTab = "operations";
 }
@@ -1283,6 +1291,67 @@ function ensureContainerStockDialog() {
   elements.containerStockNoButton.addEventListener("click", () => confirmStockDelivery(false));
 }
 
+function bindContainerQuantityDialogEvents() {
+  if (
+    !elements.containerQuantityMinusButton ||
+    !elements.containerQuantityPlusButton ||
+    !elements.containerQuantityInput ||
+    !elements.containerQuantityCancelButton ||
+    !elements.containerQuantityConfirmButton
+  ) {
+    return;
+  }
+
+  elements.containerQuantityMinusButton.addEventListener("click", () => {
+    setContainerQuantity(state.pendingContainerQuantity - 1);
+  });
+  elements.containerQuantityPlusButton.addEventListener("click", () => {
+    setContainerQuantity(state.pendingContainerQuantity + 1);
+  });
+  elements.containerQuantityInput.addEventListener("input", () => {
+    setContainerQuantity(elements.containerQuantityInput.value);
+  });
+  elements.containerQuantityCancelButton.addEventListener("click", resetPendingDelivery);
+  elements.containerQuantityConfirmButton.addEventListener("click", confirmContainerQuantity);
+}
+
+function ensureContainerQuantityDialog() {
+  if (elements.containerQuantityDialog) {
+    return;
+  }
+
+  const dialog = document.createElement("div");
+  dialog.id = "containerQuantityDialog";
+  dialog.className = "dialog-backdrop hidden";
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-labelledby", "containerQuantityTitle");
+  dialog.innerHTML = `
+    <div class="dialog-card">
+      <h2 id="containerQuantityTitle">Container Stock</h2>
+      <p>How many units were taken from the container?</p>
+      <div class="dialog-quantity-control">
+        <button id="containerQuantityMinusButton" type="button" class="secondary-button">-</button>
+        <input id="containerQuantityInput" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="Container stock quantity">
+        <button id="containerQuantityPlusButton" type="button" class="secondary-button">+</button>
+      </div>
+      <div class="dialog-actions">
+        <button id="containerQuantityCancelButton" type="button" class="secondary-button">Cancel</button>
+        <button id="containerQuantityConfirmButton" type="button" class="primary-button">Confirm</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+
+  elements.containerQuantityDialog = dialog;
+  elements.containerQuantityMinusButton = dialog.querySelector("#containerQuantityMinusButton");
+  elements.containerQuantityPlusButton = dialog.querySelector("#containerQuantityPlusButton");
+  elements.containerQuantityInput = dialog.querySelector("#containerQuantityInput");
+  elements.containerQuantityCancelButton = dialog.querySelector("#containerQuantityCancelButton");
+  elements.containerQuantityConfirmButton = dialog.querySelector("#containerQuantityConfirmButton");
+  bindContainerQuantityDialogEvents();
+}
+
 function openContainerStockDialog(requestId) {
   ensureContainerStockDialog();
   console.log("Delivered clicked, opening container confirmation", requestId);
@@ -1292,22 +1361,69 @@ function openContainerStockDialog(requestId) {
 }
 
 function closeContainerStockDialog() {
-  state.pendingDeliveryRequestId = null;
   elements.containerStockDialog.classList.add("hidden");
 }
 
-function confirmStockDelivery(takenFromContainer) {
+function closeContainerQuantityDialog() {
+  if (elements.containerQuantityDialog) {
+    elements.containerQuantityDialog.classList.add("hidden");
+  }
+}
+
+function resetPendingDelivery() {
+  state.pendingDeliveryRequestId = null;
+  state.pendingContainerQuantity = 1;
+  closeContainerStockDialog();
+  closeContainerQuantityDialog();
+}
+
+function setContainerQuantity(value) {
+  const nextQuantity = Math.max(1, Math.floor(Number(value) || 1));
+  state.pendingContainerQuantity = nextQuantity;
+
+  if (elements.containerQuantityInput) {
+    elements.containerQuantityInput.value = String(nextQuantity);
+  }
+}
+
+function openContainerQuantityDialog() {
+  ensureContainerQuantityDialog();
+  closeContainerStockDialog();
+  setContainerQuantity(1);
+  elements.containerQuantityDialog.classList.remove("hidden");
+  elements.containerQuantityInput.focus();
+}
+
+function sendStockDelivery(takenFromContainer, containerQuantity = 0) {
   if (!state.pendingDeliveryRequestId) {
-    closeContainerStockDialog();
+    resetPendingDelivery();
     return;
   }
 
-  console.log("Container confirmation answer", state.pendingDeliveryRequestId, takenFromContainer);
+  console.log("Container confirmation answer", state.pendingDeliveryRequestId, {
+    takenFromContainer,
+    containerQuantity
+  });
   socket.emit("stock:delivered", {
     requestId: state.pendingDeliveryRequestId,
-    takenFromContainer
+    takenFromContainer,
+    containerQuantity
   });
-  closeContainerStockDialog();
+  resetPendingDelivery();
+}
+
+function confirmStockDelivery(takenFromContainer) {
+  if (takenFromContainer) {
+    openContainerQuantityDialog();
+    return;
+  }
+
+  sendStockDelivery(false, 0);
+}
+
+function confirmContainerQuantity() {
+  setContainerQuantity(elements.containerQuantityInput.value);
+  sendStockDelivery(true, state.pendingContainerQuantity);
 }
 
 function saveStockChanges() {
@@ -1870,6 +1986,7 @@ if (elements.containerStockYesButton && elements.containerStockNoButton) {
   elements.containerStockYesButton.addEventListener("click", () => confirmStockDelivery(true));
   elements.containerStockNoButton.addEventListener("click", () => confirmStockDelivery(false));
 }
+bindContainerQuantityDialogEvents();
 elements.stockItemsList.addEventListener("click", handleStockClick);
 elements.stockItemsList.addEventListener("input", handleStockInput);
 elements.stockPermissionsList.addEventListener("click", handleStockPermissionClick);

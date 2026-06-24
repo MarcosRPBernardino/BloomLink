@@ -258,7 +258,23 @@
     </div>
   </div>
 
+  <div id="containerQuantityDialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="containerQuantityTitle">
+    <div class="dialog-card">
+      <h2 id="containerQuantityTitle">Container Stock</h2>
+      <p>How many units were taken from the container?</p>
+      <div class="dialog-quantity-control">
+        <button id="containerQuantityMinusButton" type="button" class="secondary-button">-</button>
+        <input id="containerQuantityInput" type="number" min="1" step="1" inputmode="numeric" value="1" aria-label="Container stock quantity">
+        <button id="containerQuantityPlusButton" type="button" class="secondary-button">+</button>
+      </div>
+      <div class="dialog-actions">
+        <button id="containerQuantityCancelButton" type="button" class="secondary-button">Cancel</button>
+        <button id="containerQuantityConfirmButton" type="button" class="primary-button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
-  <script src="app.js?v=container-confirmation-1"></script>
+  <script src="app.js?v=container-quantity-1"></script>
 </body>
 </html>

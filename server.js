@@ -1555,8 +1555,12 @@ io.on("connection", (socket) => {
     const request = stockRequests.get(requestId);
     const takenFromContainer = data?.takenFromContainer === true;
     const hasContainerAnswer = typeof data?.takenFromContainer === "boolean";
+    const containerQuantity = Math.max(1, Math.floor(Number(data?.containerQuantity) || 1));
 
-    console.log("stock delivered with container answer", requestId, data?.takenFromContainer);
+    console.log("stock delivered with container answer", requestId, {
+      takenFromContainer: data?.takenFromContainer,
+      containerQuantity
+    });
 
     if (!hasContainerAnswer) {
       console.log("stock not decremented", "missing container answer");
@@ -1576,7 +1580,7 @@ io.on("connection", (socket) => {
     request.deliveredAt = Date.now();
 
     if (takenFromContainer) {
-      const deduction = deductStockItemForDelivery(request.item, user);
+      const deduction = deductStockItemForDelivery(request.item, user, containerQuantity);
 
       if (deduction) {
         broadcastStockCountDataToStockUsers();

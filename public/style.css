@@ -592,6 +592,18 @@ button:focus-visible {
   gap: 10px;
 }
 
+.dialog-quantity-control {
+  display: grid;
+  grid-template-columns: 48px 1fr 48px;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.dialog-quantity-control input {
+  min-height: 42px;
+  text-align: center;
+}
+
 @keyframes alertPulse {
   0% {
     background: #fffaf0;
