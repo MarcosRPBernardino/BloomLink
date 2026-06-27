@@ -1,3 +1,18 @@
+self.addEventListener("install", () => {
+  console.log("Service Worker installed");
+});
+
+self.addEventListener("activate", (event) => {
+  console.log("Service Worker activated");
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener("push", (event) => {
   let payload = {
     title: "BloomLink",

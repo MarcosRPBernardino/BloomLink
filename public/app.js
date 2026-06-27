@@ -114,6 +114,7 @@ const ALERTS_STORAGE_KEY = "bloomlinkAlertsEnabled";
 let relativeTimestampTimerId = null;
 let stockMessageTimerId = null;
 let requestToastTimerId = null;
+let hasReloadedForServiceWorkerUpdate = false;
 
 const state = {
   loggedInUser: null,
@@ -143,6 +144,7 @@ const state = {
     lastAutoEndDate: null
   },
   serviceWorkerRegistration: null,
+  waitingServiceWorker: null,
   lastSelectedStockCategory: "Cups & Containers"
 };
 
@@ -166,6 +168,8 @@ const elements = {
   sendRequestButton: document.querySelector("#sendRequestButton"),
   requestToast: document.querySelector("#requestToast"),
   requestToastMessage: document.querySelector("#requestToastMessage"),
+  serviceWorkerUpdateBanner: document.querySelector("#serviceWorkerUpdateBanner"),
+  updateServiceWorkerButton: document.querySelector("#updateServiceWorkerButton"),
   clearCompletedButton: document.querySelector("#clearCompletedButton"),
   shiftControls: document.querySelector("#shiftControls"),
   keepSelfConnected: document.querySelector("#keepSelfConnected"),
@@ -584,9 +588,53 @@ async function registerServiceWorker() {
 
   if (!state.serviceWorkerRegistration) {
     state.serviceWorkerRegistration = await navigator.serviceWorker.register("/service-worker.js");
+    setupServiceWorkerUpdateFlow(state.serviceWorkerRegistration);
+    state.serviceWorkerRegistration.update().catch(() => {});
   }
 
   return state.serviceWorkerRegistration;
+}
+
+function setupServiceWorkerUpdateFlow(registration) {
+  if (registration.waiting && navigator.serviceWorker.controller) {
+    showServiceWorkerUpdateBanner(registration.waiting);
+  }
+
+  registration.addEventListener("updatefound", () => {
+    const newWorker = registration.installing;
+
+    if (!newWorker) {
+      return;
+    }
+
+    newWorker.addEventListener("statechange", () => {
+      if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+        console.log("New version available");
+        showServiceWorkerUpdateBanner(newWorker);
+      }
+    });
+  });
+}
+
+function showServiceWorkerUpdateBanner(worker) {
+  state.waitingServiceWorker = worker;
+  if (!elements.serviceWorkerUpdateBanner) {
+    return;
+  }
+
+  elements.serviceWorkerUpdateBanner.classList.remove("hidden");
+}
+
+function updateToWaitingServiceWorker() {
+  if (!state.waitingServiceWorker) {
+    return;
+  }
+
+  console.log("Updating to new version");
+  elements.serviceWorkerUpdateBanner?.classList.add("hidden");
+  state.waitingServiceWorker.postMessage({
+    type: "SKIP_WAITING"
+  });
 }
 
 async function getVapidPublicKey() {
@@ -1733,6 +1781,17 @@ socket.on("connect", () => {
 
 registerServiceWorker().catch(() => {});
 
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hasReloadedForServiceWorkerUpdate) {
+      return;
+    }
+
+    hasReloadedForServiceWorkerUpdate = true;
+    window.location.reload();
+  });
+}
+
 socket.on("disconnect", () => {
   setConnectionStatus("Connection: Disconnected", false);
 });
@@ -2024,6 +2083,7 @@ elements.startShiftButton.addEventListener("click", startShift);
 elements.logoutButton.addEventListener("click", logoutUser);
 elements.sendRequestButton.addEventListener("click", createStockRequest);
 elements.requestToast.addEventListener("click", hideRequestToast);
+elements.updateServiceWorkerButton?.addEventListener("click", updateToWaitingServiceWorker);
 elements.clearCompletedButton.addEventListener("click", clearCompletedRequests);
 elements.endAllShiftsButton.addEventListener("click", endAllShifts);
 elements.saveSettingsButton.addEventListener("click", saveSettings);

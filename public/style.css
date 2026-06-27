@@ -620,6 +620,37 @@ button:focus-visible {
   line-height: 1.35;
 }
 
+.update-banner {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.update-banner.hidden {
+  display: none;
+}
+
+.update-banner button {
+  min-height: 36px;
+  white-space: nowrap;
+}
+
 .dialog-card {
   width: min(100%, 360px);
   padding: 18px;

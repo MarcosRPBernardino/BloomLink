@@ -257,6 +257,11 @@
     </div>
   </div>
 
+  <div id="serviceWorkerUpdateBanner" class="update-banner hidden" role="status" aria-live="polite">
+    <span>A new version of BloomLink is available.</span>
+    <button id="updateServiceWorkerButton" type="button" class="secondary-button">Update</button>
+  </div>
+
   <div id="containerStockDialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="containerStockTitle">
     <div class="dialog-card">
       <h2 id="containerStockTitle">Container Stock</h2>
@@ -285,6 +290,6 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="app.js?v=container-quantity-1"></script>
+  <script src="app.js?v=sw-update-lifecycle-1"></script>
 </body>
 </html>
