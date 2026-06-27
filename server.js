@@ -1434,10 +1434,16 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("stock:create", (data) => {
+  socket.on("stock:create", (data, callback) => {
     const requester = getActiveShiftUserForSocket(socket);
 
     if (!requester || !data?.location || !data?.item) {
+      if (typeof callback === "function") {
+        callback({
+          ok: false,
+          message: "Could not create stock request."
+        });
+      }
       return;
     }
 
@@ -1511,6 +1517,17 @@ io.on("connection", (socket) => {
     }
 
     broadcastStockRequests();
+
+    if (typeof callback === "function") {
+      callback({
+        ok: true,
+        request: {
+          id: request.id,
+          location: request.location,
+          item: request.item
+        }
+      });
+    }
   });
 
   socket.on("stock:response", (data) => {

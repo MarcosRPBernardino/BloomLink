@@ -18,11 +18,6 @@ self.addEventListener("push", (event) => {
 
   const isStockRequest = Boolean(payload.requestId);
 
-  // Web Push can make notifications more noticeable, but browsers do not allow PWAs
-  // to force continuous alarm sounds. Android/iOS notification sound is controlled
-  // by the browser, OS, and user settings. Vibration and requireInteraction support
-  // also varies by browser. iOS web push generally requires installing the PWA to
-  // the Home Screen before notifications are supported.
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,

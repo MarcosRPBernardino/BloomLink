@@ -113,6 +113,7 @@ const SESSION_STORAGE_KEY = "bloomlinkSession";
 const ALERTS_STORAGE_KEY = "bloomlinkAlertsEnabled";
 let relativeTimestampTimerId = null;
 let stockMessageTimerId = null;
+let requestToastTimerId = null;
 
 const state = {
   loggedInUser: null,
@@ -121,6 +122,7 @@ const state = {
   activeRequests: [],
   receivedAlerts: [],
   adminUsers: [],
+  stockCreatePending: false,
   stockItems: [],
   stockDraftQuantities: {},
   stockHasUnsavedChanges: false,
@@ -162,6 +164,8 @@ const elements = {
   logoutButton: document.querySelector("#logoutButton"),
   stockForm: document.querySelector("#stockForm"),
   sendRequestButton: document.querySelector("#sendRequestButton"),
+  requestToast: document.querySelector("#requestToast"),
+  requestToastMessage: document.querySelector("#requestToastMessage"),
   clearCompletedButton: document.querySelector("#clearCompletedButton"),
   shiftControls: document.querySelector("#shiftControls"),
   keepSelfConnected: document.querySelector("#keepSelfConnected"),
@@ -397,6 +401,7 @@ function resetSessionState() {
   state.activeRequests = [];
   state.receivedAlerts = [];
   state.adminUsers = [];
+  state.stockCreatePending = false;
   state.stockItems = [];
   state.stockDraftQuantities = {};
   state.stockHasUnsavedChanges = false;
@@ -407,6 +412,8 @@ function resetSessionState() {
   state.pendingContainerQuantity = 1;
   state.highlightedAlertIds.clear();
   state.activeTab = "operations";
+  updateStockCreatePendingState();
+  hideRequestToast();
 }
 
 function saveSession() {
@@ -1246,19 +1253,63 @@ function startShift(event) {
   });
 }
 
+function updateStockCreatePendingState() {
+  elements.sendRequestButton.disabled = state.stockCreatePending;
+  elements.sendRequestButton.textContent = state.stockCreatePending ? "Sending..." : "Send Request";
+}
+
+function hideRequestToast() {
+  if (requestToastTimerId) {
+    clearTimeout(requestToastTimerId);
+    requestToastTimerId = null;
+  }
+
+  elements.requestToastMessage.textContent = "";
+  elements.requestToast.classList.add("hidden");
+}
+
+function showRequestToast(message) {
+  hideRequestToast();
+  elements.requestToastMessage.textContent = message;
+  elements.requestToast.classList.remove("hidden");
+  requestToastTimerId = setTimeout(hideRequestToast, 2500);
+}
+
 function createStockRequest(event) {
   event.preventDefault();
   console.log("Send Request tapped");
+
+  if (state.stockCreatePending) {
+    return;
+  }
 
   if (!state.currentUser) {
     alert("Start your shift before creating a stock request.");
     return;
   }
 
-  socket.emit("stock:create", {
-    location: elements.requestLocation.value,
-    item: elements.requestItem.value
-  });
+  const location = elements.requestLocation.value;
+  const item = elements.requestItem.value;
+  state.stockCreatePending = true;
+  updateStockCreatePendingState();
+
+  socket.timeout(7000).emit(
+    "stock:create",
+    {
+      location,
+      item
+    },
+    (error, response) => {
+      state.stockCreatePending = false;
+      updateStockCreatePendingState();
+
+      if (error || response?.ok !== true) {
+        return;
+      }
+
+      showRequestToast(`Your request for ${item} to ${location} was sent. Thank you.`);
+    }
+  );
 }
 
 function ensureContainerStockDialog() {
@@ -1972,6 +2023,7 @@ elements.loginButton.addEventListener("click", loginUser);
 elements.startShiftButton.addEventListener("click", startShift);
 elements.logoutButton.addEventListener("click", logoutUser);
 elements.sendRequestButton.addEventListener("click", createStockRequest);
+elements.requestToast.addEventListener("click", hideRequestToast);
 elements.clearCompletedButton.addEventListener("click", clearCompletedRequests);
 elements.endAllShiftsButton.addEventListener("click", endAllShifts);
 elements.saveSettingsButton.addEventListener("click", saveSettings);
