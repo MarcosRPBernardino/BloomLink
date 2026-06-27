@@ -16,13 +16,26 @@ self.addEventListener("push", (event) => {
     }
   }
 
+  const isStockRequest = Boolean(payload.requestId);
+
+  // Web Push can make notifications more noticeable, but browsers do not allow PWAs
+  // to force continuous alarm sounds. Android/iOS notification sound is controlled
+  // by the browser, OS, and user settings. Vibration and requireInteraction support
+  // also varies by browser. iOS web push generally requires installing the PWA to
+  // the Home Screen before notifications are supported.
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
       icon: "/icons/icon.svg",
       badge: "/icons/icon.svg",
-      tag: payload.tag,
-      renotify: payload.renotify === true,
+      tag: payload.tag || (isStockRequest ? `stock-${payload.requestId}` : undefined),
+      renotify: payload.renotify === true || isStockRequest,
+      requireInteraction: payload.requireInteraction === true || isStockRequest,
+      vibrate: Array.isArray(payload.vibrate)
+        ? payload.vibrate
+        : isStockRequest
+          ? [1000, 400, 1000, 400, 1000]
+          : undefined,
       data: {
         requestId: payload.requestId,
         url: payload.url || "https://bloomlink.live"
